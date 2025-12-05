@@ -23,6 +23,7 @@ import numpy as np
 import asyncio
 import argparse
 import threading
+from datetime import datetime, timezone
 import bittensor as bt
 
 from typing import List, Union
@@ -194,7 +195,17 @@ class BaseValidatorNeuron(BaseNeuron):
             self.thread.join(5)
             self.is_running = False
             bt.logging.debug("Stopped")
-
+    
+    def build_signed_headers(self) -> dict:
+        timestamp = int(datetime.now(tz=timezone.utc).timestamp())
+        message = f"<Signature>{timestamp}</Signature>"
+        signature = self.wallet.hotkey.sign(message)
+        return {
+            "X-Validator-Hotkey": self.wallet.hotkey.ss58_address,
+            "X-Validator-Signature": signature.hex(),
+            "X-Validator-Timestamp": str(timestamp),
+        }
+    
     def __enter__(self):
         self.run_in_background_thread()
         return self
@@ -233,7 +244,8 @@ class BaseValidatorNeuron(BaseNeuron):
         # Calculate the average reward for each uid across non-zero values.
         # Replace any NaN values with 0.
         # Compute the norm of the scores
-        norm = np.linalg.norm(self.scores, ord=1, axis=0, keepdims=True)
+        scores = np.nan_to_num(self.scores) ** 2
+        norm = np.linalg.norm(scores, ord=1, axis=0, keepdims=True)
 
         # Check if the norm is zero or contains NaN values
         if np.any(norm == 0) or np.isnan(norm).any():
@@ -368,20 +380,20 @@ class BaseValidatorNeuron(BaseNeuron):
         """Saves the state of the validator to a file."""
         bt.logging.info("Saving validator state.")
 
-        # Save the state of the validator to file.
-        np.savez(
-            self.config.neuron.full_path + "/state.npz",
-            step=self.step,
-            scores=self.scores,
-            hotkeys=self.hotkeys,
-        )
+        # # Save the state of the validator to file.
+        # np.savez(
+        #     self.config.neuron.full_path + "/state.npz",
+        #     step=self.step,
+        #     scores=self.scores,
+        #     hotkeys=self.hotkeys,
+        # )
 
     def load_state(self):
         """Loads the state of the validator from a file."""
         bt.logging.info("Loading validator state.")
 
-        # Load the state of the validator from file.
-        state = np.load(self.config.neuron.full_path + "/state.npz")
-        self.step = state["step"]
-        self.scores = state["scores"]
-        self.hotkeys = state["hotkeys"]
+        # # Load the state of the validator from file.
+        # state = np.load(self.config.neuron.full_path + "/state.npz")
+        # self.step = state["step"]
+        # self.scores = state["scores"]
+        # self.hotkeys = state["hotkeys"]
