@@ -29,6 +29,7 @@ from niome_subnet.base.validator import BaseValidatorNeuron
 # Bittensor Validator Template:
 from niome_subnet.validator import forward
 
+bt.logging.on()
 
 class Validator(BaseValidatorNeuron):
     """
@@ -64,5 +65,5 @@ class Validator(BaseValidatorNeuron):
 if __name__ == "__main__":
     with Validator() as validator:
         while True:
-            bt.logging.info(f"Validator running... {time.time()}")
+            # bt.logging.info(f"Validator running... {time.time()}")
             time.sleep(5)
