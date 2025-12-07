@@ -4,7 +4,7 @@ from typing import Dict, Any, List
 import bittensor as bt
 from niome_subnet.genomics.model import GenomicSimulationTask
 from niome_subnet.protocol import GenomicsTaskSynapse, GroundTruthLabel
-from niome_subnet.validator.pharmcat_validator import PharmCATValidator
+from niome_subnet.genomics.pharmcat_validator import PharmCATValidator
 from niome_subnet.utils.constants import (
     MIN_VCF_SIZE, 
     METADATA_VALIDATION_THRESHOLD, 
