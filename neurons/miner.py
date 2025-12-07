@@ -225,7 +225,7 @@ class Miner(BaseMinerNeuron):
                     allele_definitions, reference_calls, allele_one, allele_two, chromosome_chr
                 )
 
-                bt.logging.debug(f"Allele definitions: {allele_definitions} loaded into {temp_vcf}")
+                bt.logging.debug(f"Allele definitions loaded into {temp_vcf}")
 
                 # Read VCF content from file with error handling
                 try:
