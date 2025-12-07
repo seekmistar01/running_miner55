@@ -21,8 +21,10 @@ import hashlib
 import json
 import os
 import tempfile
+import random
 
 import stdpopsim
+import vcfpy
 
 # Bittensor Miner Template:
 import niome_subnet
@@ -160,6 +162,8 @@ class Miner(BaseMinerNeuron):
         """
 
         temp_vcf = None
+        temp_vcf_sim = None
+
         try:
             # Extract parameters from JSON schema task with defaults (matching validator defaults)
             population_model = task.get("population_model")
@@ -167,12 +171,41 @@ class Miner(BaseMinerNeuron):
             genome_model = task.get("genome-model")
             chromosome = task.get("chromosome")
 
-            # Create temporary file
+            # Create temporary file for simulation
+            temp_vcf_sim = tempfile.NamedTemporaryFile(suffix='.vcf', delete=False)
+            temp_vcf_sim.close()
+
+            # Create temporary file for final output
             temp_vcf = tempfile.NamedTemporaryFile(suffix='.vcf', delete=False)
             temp_vcf.close()
 
+            # Parse chromosome specification (supports single, multiple, ranges)
+            chrom_value = self._parse_chromosome_spec(chromosome)[0]
+            chromosome_chr = f"chr{chrom_value}"
+
             # Try stdpopsim simulation
-            if self._simulate_genome(temp_vcf.name, population_model, population, genome_model, chromosome):
+            if self._simulate_genome(temp_vcf_sim.name, population_model, population, genome_model, chromosome_chr):
+
+                # iterate vcf with allele_definition_file and write to temp_vcf
+                #TODO: load allele_definition_file
+                allele_definitions, reference_calls = self._read_allele_definitions(allele_definition_file)
+                if 'allele_one' in task:
+                    allele_one = task.get('allele_one')
+                else:
+                    allele_one = self._pick_random_allele(allele_definitions)
+                    bt.logging.info(f"randomly picked {allele_one} as first allele")
+
+                if 'allele_two' in task:
+                    allele_two = task.get('allele_two')
+                else:
+                    allele_two = self._pick_random_allele(allele_definitions)
+                    bt.logging.info(f"randomly picked {allele_two} as second allele")
+
+                self._iterate_vcf(
+                    temp_vcf_sim.name, temp_vcf.name,
+                    allele_definitions, reference_calls, allele_one, allele_two, chromosome_chr
+                )
+
                 # Read VCF content from file with error handling
                 try:
                     with open(temp_vcf.name, 'r') as f:
@@ -196,25 +229,23 @@ class Miner(BaseMinerNeuron):
             raise Exception(f"VCF generation error for task {task_context}: {e}")
         finally:
             # Ensure cleanup of temporary files in all cases
-            if temp_vcf:
-                try:
-                    if os.path.exists(temp_vcf.name):
-                        os.unlink(temp_vcf.name)
-                    ts_file = temp_vcf.name + ".ts"
-                    if os.path.exists(ts_file):
-                        os.unlink(ts_file)
-                except Exception as cleanup_error:
-                    bt.logging.warning(f"Error cleaning up temp files: {cleanup_error}")
+            try:
+                if os.path.exists(temp_vcf.name):
+                    os.unlink(temp_vcf.name)
+
+                if os.path.exists(temp_vcf_sim.name):
+                    os.unlink(temp_vcf_sim.name)
+
+                ts_file = temp_vcf_sim.name + ".ts"
+                if os.path.exists(ts_file):
+                    os.unlink(ts_file)
+            except Exception as cleanup_error:
+                bt.logging.warning(f"Error cleaning up temp files: {cleanup_error}")
 
     def _simulate_genome(self, vcf_name: str, population_model: str,
-                         population: str, genome_model: str, chromosome: Any) -> bool:
+                         population: str, genome_model: str, chromosome_chr: str) -> bool:
         """Run stdpopsim simulation."""
         try:
-            # Parse chromosome specification (supports single, multiple, ranges)
-            parsed_chroms = self._parse_chromosome_spec(chromosome)
-
-            chrom_value = parsed_chroms[0]
-            chromosome_chr = f"chr{chrom_value}"
             species_name = "HomSap"
 
             # Get species with caching and specific error handling
@@ -279,8 +310,9 @@ class Miner(BaseMinerNeuron):
                 if hasattr(model, 'populations'):
                     available_populations = {p.name: p for p in model.populations}
                     if population not in available_populations:
-                        raise Exception(f"Population '{population}' not found in demographic model '{population_model}'. "
-                                        f"Available populations: {list(available_populations)}")
+                        raise Exception(
+                            f"Population '{population}' not found in demographic model '{population_model}'. "
+                            f"Available populations: {list(available_populations)}")
                 else:
                     # Some models might not expose populations list - log warning but continue
                     bt.logging.debug(
@@ -542,6 +574,127 @@ class Miner(BaseMinerNeuron):
             return [chrom_str]
 
         return []
+
+    def _read_allele_definitions(self, allele_def_file):
+        """
+        reads a slightly cleaned up CSV file of allele definitions from PharmGKB
+        and outputs the allele definitions alongside default values, so
+        that the alleles can be injected into simulated VCF files
+
+        Returns the allele definitions and reference calls as tuple
+        """
+        allele_definitions = {}
+        reference_calls = []
+
+        for i, line in enumerate(open(allele_def_file, 'r')):
+            if i == 0:
+                positions = line.strip('\n').split("\t")[1:]
+            if i > 1:  # ignore location & RSID header
+                single_allele = line.strip("\n").split("\t")
+                allele_name = single_allele[0]
+                allele_definition = single_allele[1:]
+                allele_definitions[allele_name] = {}
+                for j, variant in enumerate(allele_definition):
+                    if variant != '':
+                        allele_definitions[allele_name][positions[j]] = variant
+                    else:
+                        allele_definitions[allele_name][positions[j]] = reference_calls[positions[j]]
+                if i == 2:
+                    reference_calls = allele_definitions[allele_name]
+        return (allele_definitions, reference_calls)
+
+    def _construct_record(self, reference_calls, allele_definitions,
+                         allele_one, allele_two, allele_pos,
+                         chromosome):
+        """
+        construct VCF record to inject into file based on alleles, pass:
+        1. reference calls
+        2. full allele definitions
+        3. name of allele 1
+        4. name of allele 2
+        5. position of allele
+        6. the chromosome (in 'chrX' format)
+
+        Returns a single VCF record/row with the corresponding two alleles requested
+        """
+        # start with substitution creation, get ref variant and both calls from alleles
+        ref_allele = reference_calls[allele_pos]
+        alt_one = allele_definitions[allele_one][allele_pos]
+        alt_two = allele_definitions[allele_two][allele_pos]
+        # print(ref_allele, alt_one, alt_two)
+        # check if we need to make one or two alt alleles (mostly will be one)
+        # create list of alt alleles
+        if len(set([ref_allele, alt_one, alt_two])) == 1:
+            # print('both are ref')
+            alt = [vcfpy.Substitution('SNV', random.choice('ATCG'))]
+            gt = '0|0'
+        elif len(set([ref_allele, alt_one, alt_two])) == 2:
+            # print('got only one alt allele')
+            if alt_one == ref_allele:
+                alt = [vcfpy.Substitution('SNV', alt_two)]
+                gt = '0|1'
+            else:
+                alt = [vcfpy.Substitution('SNV', alt_one)]
+                gt = '1|0'
+        else:
+            # print('got two alt alleles')
+            alt = [vcfpy.Substitution('SNV', alt_one), vcfpy.Substitution('SNV', alt_two)]
+            gt = '1|2'
+
+        # create genotype call
+        call = vcfpy.Call('tsk_0', {'GT': gt})
+
+        record = vcfpy.Record(chromosome,
+                              int(allele_pos),
+                              [],
+                              ref_allele,
+                              alt,
+                              None, ["PASS"],
+                              {},
+                              ["GT"],
+                              [call])
+        return record
+
+    def _iterate_vcf(self, infile, outfile, allele_definitions,
+                     reference_calls, allele_one, allele_two, chromosome):
+        """
+        open a VCF file, iterate over it, replace/add the variants as needed
+        and then write output to new file
+        """
+
+        reader = vcfpy.Reader.from_path(infile)
+
+        # Build and print header
+        # print(reader.header)
+        # print(reader.header.samples.names)
+        contig_length = list(reader.header.get_lines('contig'))[0].length
+        reader.header.add_contig_line({'ID': chromosome, 'length': int(contig_length)})
+
+        # if simulation randomly generated variants for positions of interest,
+        # we want to skip these to replace them with our pharma markers
+        skip_positions = list(reference_calls.keys())
+
+        writer = vcfpy.Writer.from_path(outfile, reader.header)
+
+        # write all the existing records, except where they conflict with our target allele
+        for record in reader:
+            if record.POS not in skip_positions:
+                record.CHROM = chromosome
+                record.ID = "."
+                writer.write_record(record)
+
+        # write our own alleles
+        for entry in reference_calls:
+            new_record = self._construct_record(reference_calls,
+                                          allele_definitions,
+                                          allele_one,
+                                          allele_two,
+                                          entry,
+                                          chromosome)
+            writer.write_record(new_record)
+
+    def _pick_random_allele(self, allele_definitions):
+        return random.choice(list(allele_definitions.keys()))
 
     async def blacklist(self, synapse: niome_subnet.protocol.GenomicsTaskSynapse) -> Tuple[bool, str]:
         """
