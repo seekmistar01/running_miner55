@@ -21,18 +21,19 @@ from typing import List
 import bittensor as bt
 from niome_subnet.genomics.model import GenomicSimulationTask
 from niome_subnet.protocol import GenomicsTaskSynapse
+from niome_subnet.validator.validate_response import validate_response
 
 def reward(query: int, response: GenomicsTaskSynapse, task: GenomicSimulationTask) -> float:
     """
     Reward the miner response to the request. This method returns a reward
-    value for the miner, which is used to update the miner's score.
+    value for the miner, which is used to update the miner"s score.
 
     Returns:
     - float: The reward value for the miner.
     """
-    # Checking miner's response with task
-
-    return 1.0
+    # Checking miner"s response with task
+    reward = validate_response(response, task)
+    return reward
 
 
 def get_rewards(
