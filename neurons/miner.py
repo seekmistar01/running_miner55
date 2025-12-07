@@ -7,21 +7,23 @@
 # and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 # The above copyright notice and this permission notice shall be included in all copies or substantial portions of
 # the Software.
-
 # THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
 # THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
 # THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import time
 import bittensor as bt
+
 from typing import Dict, Any, Tuple, Optional, List
 import hashlib
 import json
 import os
 import tempfile
 import random
+import sys
+import time
+import urllib
 
 import stdpopsim
 import vcfpy
@@ -33,6 +35,13 @@ import niome_subnet
 from niome_subnet.base.miner import BaseMinerNeuron
 from niome_subnet.protocol import GenomicsTaskSynapse
 
+bt.logging.on()
+
+# Add project root to Python path
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 
 class Miner(BaseMinerNeuron):
     """
@@ -42,6 +51,8 @@ class Miner(BaseMinerNeuron):
 
     This class provides reasonable default behavior for a miner such as blacklisting unrecognized hotkeys, prioritizing requests based on stake, and forwarding requests to the forward function. If you need to define custom
     """
+
+    MAX_RETRIES = 3  # Maximum number of retry attempts for network operations
 
     # Task schema definitions
     EXPECTED_FIELDS = {
@@ -183,12 +194,18 @@ class Miner(BaseMinerNeuron):
             chrom_value = self._parse_chromosome_spec(chromosome)[0]
             chromosome_chr = f"chr{chrom_value}"
 
+            # get allele_definition_file path and ensure file exists and is valid
+            allele_definition_file = self._get_allele_file_path(task)
+
+            if not allele_definition_file:
+                raise Exception("CYP2C9 allele definition CSV not available")
+
             # Try stdpopsim simulation
             if self._simulate_genome(temp_vcf_sim.name, population_model, population, genome_model, chromosome_chr):
 
                 # iterate vcf with allele_definition_file and write to temp_vcf
-                #TODO: load allele_definition_file
                 allele_definitions, reference_calls = self._read_allele_definitions(allele_definition_file)
+
                 if 'allele_one' in task:
                     allele_one = task.get('allele_one')
                 else:
@@ -575,6 +592,262 @@ class Miner(BaseMinerNeuron):
 
         return []
 
+    def _calculate_file_md5(self, file_path: str) -> str:
+        """
+        Calculate MD5 hash of a file.
+
+        Args:
+            file_path: Path to the file
+
+        Returns:
+            MD5 hash as hexadecimal string
+        """
+        hash_md5 = hashlib.md5()
+        try:
+            with open(file_path, "rb") as f:
+                for chunk in iter(lambda: f.read(4096), b""):
+                    hash_md5.update(chunk)
+            return hash_md5.hexdigest()
+        except Exception as e:
+            bt.logging.error(f"Error calculating MD5 for {file_path}: {e}")
+            return ""
+
+    def _validate_allele_file_structure(self, csv_path: str) -> bool:
+        """
+        Validate the structure of the allele definition CSV file.
+        Checks that all rows have consistent column counts matching the header.
+
+        This validation is performed when downloading new files to catch malformed data early.
+
+        Args:
+            csv_path: Path to the CSV file
+
+        Returns:
+            True if file structure is valid, False otherwise
+        """
+        try:
+            with open(csv_path, 'r', encoding='utf-8') as csvfile:
+                lines = csvfile.readlines()
+
+            if not lines:
+                bt.logging.error(f"Allele definition file is empty: {csv_path}")
+                return False
+
+            # Parse header
+            header_line = lines[0].strip('\n')
+            positions = header_line.split("\t")[1:]  # skip first field (allele name)
+            num_positions = len(positions)
+
+            if num_positions == 0:
+                bt.logging.error(f"Allele definition file has no positions in header: {csv_path}")
+                return False
+
+            bt.logging.debug(f"Allele definition file header has {num_positions} positions")
+
+            # Validate each data row
+            errors = []
+            for i, line in enumerate(lines[1:], start=2):  # Start at line 2 (skip header)
+                tokens = line.strip('\n').split("\t")
+
+                if len(tokens) < 2:
+                    errors.append(f"Row {i}: Too few columns (expected at least 2, got {len(tokens)})")
+                    continue
+
+                allele_name = tokens[0]
+                allele_definition = tokens[1:]
+                num_variants = len(allele_definition)
+
+                # Check bounds: number of variants should match number of positions
+                if num_variants > num_positions:
+                    errors.append(
+                        f"Row {i} (allele '{allele_name}'): Has {num_variants} variants "
+                        f"but header only has {num_positions} positions. "
+                        f"Extra variants will be ignored."
+                    )
+                elif num_variants < num_positions:
+                    errors.append(
+                        f"Row {i} (allele '{allele_name}'): Has {num_variants} variants "
+                        f"but header has {num_positions} positions. "
+                        f"Missing variants will use reference calls."
+                    )
+
+            if errors:
+                bt.logging.error(
+                    f"Allele definition file structure validation failed for {csv_path}:"
+                )
+                for error in errors[:10]:  # Show first 10 errors
+                    bt.logging.error(f"  - {error}")
+                if len(errors) > 10:
+                    bt.logging.error(f"  ... and {len(errors) - 10} more errors")
+
+                # Reject file with structural errors
+                return False
+
+            bt.logging.info(f"Allele definition file structure validation passed: {csv_path}")
+            return True
+
+        except Exception as e:
+            bt.logging.error(f"Error validating allele file structure for {csv_path}: {e}")
+            return False
+
+    def _verify_file_integrity(self, csv_path: str, md5_path: str) -> bool:
+        """
+        Verify file integrity by comparing calculated MD5 with stored MD5.
+
+        Args:
+            csv_path: Path to the CSV file
+            md5_path: Path to the MD5 file
+
+        Returns:
+            True if file exists and MD5 matches, False otherwise
+        """
+        if not os.path.exists(csv_path):
+            return False
+
+        if not os.path.exists(md5_path):
+            bt.logging.warning(f"MD5 file not found at {md5_path}")
+            return False
+
+        try:
+            # Read expected MD5 from file
+            with open(md5_path, 'r') as f:
+                expected_md5 = f.read().strip().split()[0]  # Handle format like "hash filename"
+
+            # Calculate actual MD5
+            actual_md5 = self._calculate_file_md5(csv_path)
+
+            if not actual_md5:
+                return False
+
+            # Compare MD5s
+            if actual_md5.lower() == expected_md5.lower():
+                bt.logging.info(f"MD5 verification passed for {csv_path}")
+                return True
+            else:
+                bt.logging.warning(f"MD5 mismatch for {csv_path}: expected {expected_md5}, got {actual_md5}")
+                return False
+
+        except Exception as e:
+            bt.logging.error(f"Error verifying file integrity: {e}")
+            return False
+
+    def _download_file(self, url: str, file_path: str, max_retries: int = None) -> bool:
+        """
+        Download a file from URL to local path with retry logic.
+
+        Args:
+            url: URL to download from
+            file_path: Local path to save the file
+            max_retries: Maximum number of retry attempts (default: MAX_RETRIES)
+
+        Returns:
+            True if download successful, False otherwise
+        """
+        # Use class constant if not specified
+        if max_retries is None:
+            max_retries = self.MAX_RETRIES
+
+        for attempt in range(max_retries):
+            try:
+                bt.logging.info(f"Downloading {url} to {file_path} (attempt {attempt + 1}/{max_retries})")
+                urllib.request.urlretrieve(url, file_path)
+                bt.logging.info(f"Successfully downloaded {file_path}")
+                return True
+            except urllib.error.URLError as e:
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s, etc.
+                    bt.logging.warning(
+                        f"Download attempt {attempt + 1} failed: {e}, "
+                        f"retrying in {wait_time}s..."
+                    )
+                    time.sleep(wait_time)
+                else:
+                    bt.logging.error(f"Error downloading {url} after {max_retries} attempts: {e}")
+                    return False
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt
+                    bt.logging.warning(
+                        f"Unexpected error on attempt {attempt + 1}: {e}, "
+                        f"retrying in {wait_time}s..."
+                    )
+                    time.sleep(wait_time)
+                else:
+                    bt.logging.error(f"Unexpected error downloading {url} after {max_retries} attempts: {e}")
+                    return False
+
+        return False
+
+    def _get_allele_file_path(self, task_data: Dict) -> Optional[str]:
+        """
+        Get file path and ensure the allele definition file exists and is valid.
+        Checks for file and MD5, verifies integrity, and downloads if needed.
+
+        Returns:
+            Path to the CSV file if available, None otherwise
+        """
+        # Use the data directory relative to project root
+        data_dir = os.path.join(PROJECT_ROOT, "data")
+
+        # Create data directory if it doesn't exist
+        os.makedirs(data_dir, exist_ok=True)
+
+        csv_filename = "allele_file.cached.csv"
+
+        csv_path = os.path.join(data_dir, csv_filename)
+        md5_path = os.path.join(data_dir, f"{csv_filename}.md5")
+
+        csv_url = task_data['alleles']
+        md5_url = task_data['alleles_md5']
+
+        # Download MD5 file first
+        if not self._download_file(md5_url, md5_path):
+            bt.logging.error("Failed to download MD5 file")
+            return None
+
+        # Check if both files exist and verify integrity
+        if os.path.exists(csv_path) and os.path.exists(md5_path):
+            if self._verify_file_integrity(csv_path, md5_path):
+                bt.logging.info(f"Using existing allele definition file: {csv_path}")
+                return csv_path
+            else:
+                bt.logging.warning("MD5 verification failed, will re-download files")
+                # Remove invalid files
+                try:
+                    if os.path.exists(csv_path):
+                        os.remove(csv_path)
+                except Exception as e:
+                    bt.logging.warning(f"Error removing invalid files: {e}")
+
+        # Download files if missing or invalid
+        bt.logging.info("Downloading allele definition files...")
+
+        # Download CSV file
+        if not self._download_file(csv_url, csv_path):
+            bt.logging.error("Failed to download CSV file")
+            return None
+
+        # Verify integrity of downloaded file
+        if not self._verify_file_integrity(csv_path, md5_path):
+            bt.logging.error("Downloaded file failed MD5 verification")
+            return None
+
+        # Validate file structure (only for newly downloaded files)
+        if not self._validate_allele_file_structure(csv_path):
+            bt.logging.error("Downloaded file failed structure validation")
+            # Remove invalid file
+            try:
+                if os.path.exists(csv_path):
+                    os.remove(csv_path)
+                if os.path.exists(md5_path):
+                    os.remove(md5_path)
+            except Exception as e:
+                bt.logging.warning(f"Error removing invalid files: {e}")
+            return None
+
+        bt.logging.info(f"Successfully downloaded and verified allele definition file: {csv_path}")
+        return csv_path
+
     def _read_allele_definitions(self, allele_def_file):
         """
         reads a slightly cleaned up CSV file of allele definitions from PharmGKB
@@ -604,8 +877,8 @@ class Miner(BaseMinerNeuron):
         return (allele_definitions, reference_calls)
 
     def _construct_record(self, reference_calls, allele_definitions,
-                         allele_one, allele_two, allele_pos,
-                         chromosome):
+                          allele_one, allele_two, allele_pos,
+                          chromosome):
         """
         construct VCF record to inject into file based on alleles, pass:
         1. reference calls
@@ -686,11 +959,11 @@ class Miner(BaseMinerNeuron):
         # write our own alleles
         for entry in reference_calls:
             new_record = self._construct_record(reference_calls,
-                                          allele_definitions,
-                                          allele_one,
-                                          allele_two,
-                                          entry,
-                                          chromosome)
+                                                allele_definitions,
+                                                allele_one,
+                                                allele_two,
+                                                entry,
+                                                chromosome)
             writer.write_record(new_record)
 
     def _pick_random_allele(self, allele_definitions):

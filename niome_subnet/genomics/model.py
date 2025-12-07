@@ -8,3 +8,4 @@ class GenomicSimulationTask(BaseModel):
     chromosome: int
     output: str = "vcf"
     alleles: str
+    alleles_md5: str
