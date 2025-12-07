@@ -34,7 +34,6 @@ import niome_subnet
 # import base miner class which takes care of most of the boilerplate
 from niome_subnet.base.miner import BaseMinerNeuron
 from niome_subnet.protocol import GenomicsTaskSynapse
-from niome_subnet.genomics.model import GenomicSimulationTask
 
 bt.logging.on()
 
@@ -94,7 +93,8 @@ class Miner(BaseMinerNeuron):
             # Process genomics task (VCF generation)
             start_time = time.time()
 
-            task_data = synapse.task
+            # dump dict from model
+            task_data = synapse.task.model_dump()
 
             bt.logging.info(f"Processing genomics task: {task_data}")
 
@@ -476,7 +476,7 @@ class Miner(BaseMinerNeuron):
             bt.logging.warning(f"Could not add metadata to VCF: {metadata_error}")
             return vcf_content  # Return original content if metadata addition fails
 
-    def _validate_task(self, task: GenomicSimulationTask) -> None:
+    def _validate_task(self, task: Dict[str, Any]) -> None:
         """
         Validate JSON schema task against expected format.
         Uses cached class constants for schema definitions to avoid recreation overhead.
@@ -488,7 +488,7 @@ class Miner(BaseMinerNeuron):
         """
         errors = []
 
-        if not isinstance(task, GenomicSimulationTask):
+        if not isinstance(task, dict):
             raise Exception(f"Invalid task format: expected dict, got {type(task)}")
 
         # Check for required fields (using cached class constant)
