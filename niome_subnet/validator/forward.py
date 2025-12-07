@@ -1,7 +1,6 @@
 # The MIT License (MIT)
 # Copyright © 2023 Yuma Rao
-# TODO(developer): Set your name
-# Copyright © 2023 <your name>
+# Copyright © 2023 Genomes.io
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
 # documentation files (the “Software”), to deal in the Software without restriction, including without limitation
@@ -18,7 +17,7 @@
 # DEALINGS IN THE SOFTWARE.
 
 import time
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Coroutine
 import bittensor as bt
 import aiohttp
 
@@ -30,7 +29,7 @@ from niome_subnet.genomics.model import GenomicSimulationTask
 import niome_subnet.utils.constants as config
 
 
-async def generate_task(self) -> GenomicSimulationTask:
+async def generate_task(self) -> GenomicSimulationTask | dict[str, str | int]:
     """Generate a synthetic genomic simulation task."""
 
     endpoint = f"{config.GENOMIC_STORAGE_URL}/generate"
@@ -73,7 +72,7 @@ async def forward(self):
     """
     miner_uids = get_random_uids(self, k=config.MINER_QUERY_K)
 
-    task = generate_task(self)
+    task = await generate_task(self)
 
     synapse = GenomicsTaskSynapse(task=task, timeout=config.FORWARD_TIMEOUT)
 
