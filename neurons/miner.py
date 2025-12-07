@@ -54,28 +54,8 @@ class Miner(BaseMinerNeuron):
 
     MAX_RETRIES = 3  # Maximum number of retry attempts for network operations
 
-    # Task schema definitions
-    EXPECTED_FIELDS = {
-        "simulator": str,  # e.g., "stdpopsim"
-        "population_model": str,  # e.g., "OutOfAfrica_4J17"
-        "population": str,  # e.g., "CEU", "YRI", "CHB", "JPT"
-        "genome-model": str,  # e.g., "PyrhoCEU_GRCh38"
-        "chromosome": (int, str, list),
-        # Single: 1-22, "1"-"22", "X", "chr1"; Multiple: "1,2,3", ["1","2"]; Range: "1-5", "chr1-chr5"
-        "output": str,  # e.g., "vcf"
-        "alleles": str,  # Optional: URL or reference
-    }
-    REQUIRED_FIELDS = ["simulator", "population_model", "population", "chromosome", "output"]
-    VALID_POPULATIONS = ["CEU", "YRI", "CHB", "JPT", "AFR", "AMR", "EAS", "EUR", "SAS"]
-
     def __init__(self, config=None):
         super(Miner, self).__init__(config=config)
-
-        # Cache for stdpopsim objects to avoid recreating them on every call
-        self._species_cache = {}  # Cache for species objects
-        self._model_cache = {}  # Cache for demographic model objects (species_name, population_model)
-        self._contig_cache = {}  # Cache for contig objects (species_name, chromosome, genome_model)
-        self._engine_cache = None  # Cache for engine (usually msprime, same for all)
 
     async def forward(self, synapse: GenomicsTaskSynapse) -> GenomicsTaskSynapse:
         """
@@ -97,9 +77,6 @@ class Miner(BaseMinerNeuron):
             task_data = synapse.task.model_dump()
 
             bt.logging.info(f"Processing genomics task: {task_data}")
-
-            # Validate JSON schema task format
-            self._validate_task(task_data)
 
             # Generate VCF file based on JSON schema task
             vcf_content = self._generate_vcf_from_task(task_data)
@@ -234,9 +211,7 @@ class Miner(BaseMinerNeuron):
                 except IOError as e:
                     raise Exception(f"Could not open {temp_vcf.name}: {e}")
 
-                # Add metadata to VCF (block hash, miner hotkey, task parameters)
-                bt.logging.debug(f"Add metadata to {temp_vcf}")
-
+                # Add metadata to VCF
                 vcf_content = self._add_vcf_metadata(vcf_content, task)
 
                 bt.logging.debug(f"added metadata to {temp_vcf}")
@@ -274,77 +249,16 @@ class Miner(BaseMinerNeuron):
             species_name = "HomSap"
 
             # Get species with caching and specific error handling
-            try:
-                if species_name not in self._species_cache:
-                    self._species_cache[species_name] = stdpopsim.get_species(species_name)
-                    bt.logging.debug(f"Cached species: {species_name}")
-                species = self._species_cache[species_name]
-            except (KeyError, ValueError) as e:
-                bt.logging.error(f"Failed to get species '{species_name}': {e}")
-                return False
-            except Exception as e:
-                bt.logging.error(f"Unexpected error getting species '{species_name}': {e}")
-                return False
+            species = stdpopsim.get_species(species_name)
 
             # Get demographic model with caching and specific error handling
-            model_cache_key = f"{species_name}_{population_model}"
-            try:
-                if model_cache_key not in self._model_cache:
-                    model = species.get_demographic_model(population_model)
-                    self._model_cache[model_cache_key] = model
-                    bt.logging.debug(f"Cached demographic model: {model_cache_key}")
-                else:
-                    model = self._model_cache[model_cache_key]
-            except KeyError as e:
-                # Try to list available models for better error message
-                available_models = list(species.list_demographic_models())
-                raise Exception(f"Demographic model '{population_model}' not found. "
-                                f"Available models: {available_models}")
-            except Exception as e:
-                raise Exception(f"Error getting demographic model '{population_model}': {e}")
+            model = species.get_demographic_model(population_model)
 
             # Get contig with genetic map with caching and specific error handling
-            contig_cache_key = f"{species_name}_{chromosome_chr}_{genome_model}_{model.mutation_rate}"
-            try:
-                if contig_cache_key not in self._contig_cache:
-                    contig = species.get_contig(chromosome_chr, genetic_map=genome_model,
-                                                mutation_rate=model.mutation_rate)
-                    self._contig_cache[contig_cache_key] = contig
-                    bt.logging.debug(f"Cached contig: {contig_cache_key}")
-                else:
-                    contig = self._contig_cache[contig_cache_key]
-            except KeyError as e:
-                raise Exception(f"Contig '{chromosome_chr}' or genetic map '{genome_model}' not found: {e}")
-            except Exception as e:
-                raise Exception(f"Error getting contig '{chromosome_chr}' with genetic map '{genome_model}': {e}")
+            contig = species.get_contig(chromosome_chr, genetic_map=genome_model, mutation_rate=model.mutation_rate)
 
             # Get engine with caching and specific error handling
-            try:
-                if self._engine_cache is None:
-                    self._engine_cache = stdpopsim.get_engine("msprime")
-                    bt.logging.debug("Cached msprime engine")
-                engine = self._engine_cache
-            except (KeyError, ValueError) as e:
-                raise Exception(f"Failed to get msprime engine: {e}")
-            except Exception as e:
-                raise Exception(f"Unexpected error getting engine: {e}")
-
-            # Validate population exists in model before simulation
-            try:
-                # Try to get available populations from model
-                if hasattr(model, 'populations'):
-                    available_populations = {p.name: p for p in model.populations}
-                    if population not in available_populations:
-                        raise Exception(
-                            f"Population '{population}' not found in demographic model '{population_model}'. "
-                            f"Available populations: {list(available_populations)}")
-                else:
-                    # Some models might not expose populations list - log warning but continue
-                    bt.logging.debug(
-                        f"Could not validate population '{population}' - model doesn't expose populations list")
-            except Exception as pop_validation_error:
-                # If validation fails, log warning but continue (some models might not support this)
-                bt.logging.warning(f"Could not validate population '{population}': {pop_validation_error}")
+            engine = stdpopsim.get_engine("msprime")
 
             # Set up our sample for single genome
             samples = {population: 1}
@@ -381,7 +295,7 @@ class Miner(BaseMinerNeuron):
 
     def _add_vcf_metadata(self, vcf_content: str, task: Optional[Dict[str, Any]] = None) -> str:
         """
-        Add metadata to VCF content including block hash, miner identification, and task parameters.
+        Add metadata to VCF content including miner identification, and task parameters.
 
         Args:
             vcf_content: VCF file content as string
@@ -436,13 +350,6 @@ class Miner(BaseMinerNeuron):
             # Build metadata lines
             metadata_lines = []
 
-            # Add Bittensor block and miner identification (always add these)
-            try:
-                current_block = self.block
-                metadata_lines.append(f"##bittensor_block={current_block}\n")
-            except Exception as block_error:
-                bt.logging.warning(f"Could not get current block: {block_error}")
-
             try:
                 hotkey_address = self.wallet.hotkey.ss58_address
                 metadata_lines.append(f"##miner_hotkey={hotkey_address}\n")
@@ -485,53 +392,6 @@ class Miner(BaseMinerNeuron):
         except Exception as metadata_error:
             bt.logging.warning(f"Could not add metadata to VCF: {metadata_error}")
             return vcf_content  # Return original content if metadata addition fails
-
-    def _validate_task(self, task: Dict[str, Any]) -> None:
-        """
-        Validate JSON schema task against expected format.
-        Uses cached class constants for schema definitions to avoid recreation overhead.
-
-        Args:
-            task: Task dictionary from validator
-        Raises:
-            Exception: Task schema validation error
-        """
-        errors = []
-
-        if not isinstance(task, dict):
-            raise Exception(f"Invalid task format: expected dict, got {type(task)}")
-
-        # Check for required fields (using cached class constant)
-        for field in self.REQUIRED_FIELDS:
-            if field not in task:
-                errors.append(f"Missing required field: {field}")
-
-        # Validate field types (using cached class constant)
-        for field, expected_type in self.EXPECTED_FIELDS.items():
-            if field in task:
-                # Special handling for chromosome field (can be int, str, or list)
-                if field == "chromosome":
-                    if not isinstance(task[field], (int, str, list)):
-                        errors.append(
-                            f"Field '{field}' has wrong type: expected int, str, or list, got {type(task[field])}")
-                elif not isinstance(task[field], expected_type):
-                    if not (isinstance(expected_type, tuple) and isinstance(task[field], expected_type)):
-                        errors.append(
-                            f"Field '{field}' has wrong type: expected {expected_type}, got {type(task[field])}")
-
-        # Validate chromosome is valid (supports single, multiple, and ranges)
-        if "chromosome" in task:
-            parsed_chroms = self._parse_chromosome_spec(task["chromosome"])
-            if not parsed_chroms:
-                errors.append(f"Invalid chromosome specification: {task['chromosome']}")
-
-        # Validate population is one of expected values (using cached class constant)
-        if "population" in task:
-            if task["population"] not in self.VALID_POPULATIONS:
-                bt.logging.warning(f"Unknown population: {task['population']}")
-
-        if errors:
-            raise Exception(f"Task schema validation failed: {', '.join(errors)}")
 
     def _parse_chromosome_spec(self, chromosome_spec: Any) -> List[str]:
         """
@@ -622,84 +482,6 @@ class Miner(BaseMinerNeuron):
         except Exception as e:
             bt.logging.error(f"Error calculating MD5 for {file_path}: {e}")
             return ""
-
-    def _validate_allele_file_structure(self, csv_path: str) -> bool:
-        """
-        Validate the structure of the allele definition CSV file.
-        Checks that all rows have consistent column counts matching the header.
-
-        This validation is performed when downloading new files to catch malformed data early.
-
-        Args:
-            csv_path: Path to the CSV file
-
-        Returns:
-            True if file structure is valid, False otherwise
-        """
-        try:
-            with open(csv_path, 'r', encoding='utf-8') as csvfile:
-                lines = csvfile.readlines()
-
-            if not lines:
-                bt.logging.error(f"Allele definition file is empty: {csv_path}")
-                return False
-
-            # Parse header
-            header_line = lines[0].strip('\n')
-            positions = header_line.split("\t")[1:]  # skip first field (allele name)
-            num_positions = len(positions)
-
-            if num_positions == 0:
-                bt.logging.error(f"Allele definition file has no positions in header: {csv_path}")
-                return False
-
-            bt.logging.debug(f"Allele definition file header has {num_positions} positions")
-
-            # Validate each data row
-            errors = []
-            for i, line in enumerate(lines[1:], start=2):  # Start at line 2 (skip header)
-                tokens = line.strip('\n').split("\t")
-
-                if len(tokens) < 2:
-                    errors.append(f"Row {i}: Too few columns (expected at least 2, got {len(tokens)})")
-                    continue
-
-                allele_name = tokens[0]
-                allele_definition = tokens[1:]
-                num_variants = len(allele_definition)
-
-                # Check bounds: number of variants should match number of positions
-                if num_variants > num_positions:
-                    errors.append(
-                        f"Row {i} (allele '{allele_name}'): Has {num_variants} variants "
-                        f"but header only has {num_positions} positions. "
-                        f"Extra variants will be ignored."
-                    )
-                elif num_variants < num_positions:
-                    errors.append(
-                        f"Row {i} (allele '{allele_name}'): Has {num_variants} variants "
-                        f"but header has {num_positions} positions. "
-                        f"Missing variants will use reference calls."
-                    )
-
-            if errors:
-                bt.logging.error(
-                    f"Allele definition file structure validation failed for {csv_path}:"
-                )
-                for error in errors[:10]:  # Show first 10 errors
-                    bt.logging.error(f"  - {error}")
-                if len(errors) > 10:
-                    bt.logging.error(f"  ... and {len(errors) - 10} more errors")
-
-                # Reject file with structural errors
-                return False
-
-            bt.logging.info(f"Allele definition file structure validation passed: {csv_path}")
-            return True
-
-        except Exception as e:
-            bt.logging.error(f"Error validating allele file structure for {csv_path}: {e}")
-            return False
 
     def _verify_file_integrity(self, csv_path: str, md5_path: str) -> bool:
         """
@@ -843,20 +625,7 @@ class Miner(BaseMinerNeuron):
             bt.logging.error("Downloaded file failed MD5 verification")
             return None
 
-        # Validate file structure (only for newly downloaded files)
-        if not self._validate_allele_file_structure(csv_path):
-            bt.logging.error("Downloaded file failed structure validation")
-            # Remove invalid file
-            try:
-                if os.path.exists(csv_path):
-                    os.remove(csv_path)
-                if os.path.exists(md5_path):
-                    os.remove(md5_path)
-            except Exception as e:
-                bt.logging.warning(f"Error removing invalid files: {e}")
-            return None
-
-        bt.logging.info(f"Successfully downloaded and verified allele definition file: {csv_path}")
+        bt.logging.info(f"Successfully downloaded allele definition file: {csv_path}")
         return csv_path
 
     def _read_allele_definitions(self, allele_def_file):
