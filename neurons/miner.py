@@ -204,6 +204,7 @@ class Miner(BaseMinerNeuron):
             # Try stdpopsim simulation
             if self._simulate_genome(temp_vcf_sim.name, population_model, population, genome_model, chromosome_chr):
 
+                bt.logging.debug(f"Load allele definitions")
                 # iterate vcf with allele_definition_file and write to temp_vcf
                 allele_definitions, reference_calls = self._read_allele_definitions(allele_definition_file)
 
@@ -224,6 +225,8 @@ class Miner(BaseMinerNeuron):
                     allele_definitions, reference_calls, allele_one, allele_two, chromosome_chr
                 )
 
+                bt.logging.debug(f"Allele definitions: {allele_definitions} loaded into {temp_vcf}")
+
                 # Read VCF content from file with error handling
                 try:
                     with open(temp_vcf.name, 'r') as f:
@@ -232,7 +235,11 @@ class Miner(BaseMinerNeuron):
                     raise Exception(f"Could not open {temp_vcf.name}: {e}")
 
                 # Add metadata to VCF (block hash, miner hotkey, task parameters)
+                bt.logging.debug(f"Add metadata to {temp_vcf}")
+
                 vcf_content = self._add_vcf_metadata(vcf_content, task)
+
+                bt.logging.debug(f"added metadata to {temp_vcf}")
 
                 return vcf_content
 
@@ -344,6 +351,7 @@ class Miner(BaseMinerNeuron):
 
             # Simulate with error handling
             try:
+                bt.logging.debug(f"Start simulation")
                 ts = engine.simulate(model, contig, samples)
             except Exception as e:
                 raise Exception(f"Simulation failed: {e}")
@@ -353,6 +361,7 @@ class Miner(BaseMinerNeuron):
 
             # Write to VCF with correct chromosome name
             try:
+                bt.logging.debug(f"Write vcf to {vcf_name}")
                 with open(vcf_name, "w") as out:
                     ts.write_vcf(out, contig_id=chromosome_chr)
             except IOError as e:
@@ -364,6 +373,7 @@ class Miner(BaseMinerNeuron):
             if not os.path.exists(vcf_name) or os.path.getsize(vcf_name) == 0:
                 raise Exception(f"VCF file was not created or is empty: {vcf_name}")
 
+            bt.logging.debug(f"Simulation finished")
             return True
 
         except Exception as e:
