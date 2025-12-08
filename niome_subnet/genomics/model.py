@@ -7,4 +7,3 @@ class GenomicSimulationTask(BaseModel):
     genome_model: str
     chromosome: int
     output: str = "vcf"
-    alleles: str
