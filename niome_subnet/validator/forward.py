@@ -55,8 +55,6 @@ async def generate_task(self) -> GenomicSimulationTask | dict[str, str | int]:
             "genome_model": "PyrhoCHB_GRCh38",
             "chromosome": 10,
             "output": "vcf",
-            "alleles": "https://api.genomes.io/CYP2C9_allele_definition_table.fixed_positions.csv",
-            "alleles_md5": "https://api.genomes.io/CYP2C9_allele_definition_table.fixed_positions.csv.md5",
         }
 
 

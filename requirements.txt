@@ -7,4 +7,3 @@ numpy>=1
 setuptools>=68
 bittensor>=9.0.0
 stdpopsim>=0.3.0
-vcfpy>=0.13.8

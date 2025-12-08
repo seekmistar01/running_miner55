@@ -20,13 +20,10 @@ import hashlib
 import json
 import os
 import tempfile
-import random
 import sys
 import time
-import urllib
 
 import stdpopsim
-import vcfpy
 
 # Bittensor Miner Template:
 import niome_subnet
@@ -140,8 +137,6 @@ class Miner(BaseMinerNeuron):
                 - chromosome: chromosome specification (single: "1"-"22", "X", "chr1";
                   multiple: "1,2,3", ["1","2"]; range: "1-5", "chr1-chr5")
                 - output: output format ("vcf")
-                - alleles: optional alleles reference URL
-                - md5_upload_url: optional URL endpoint for HTTP POST of MD5 hash
 
         Returns:
             VCF file content as string (with metadata embedded)
@@ -151,7 +146,6 @@ class Miner(BaseMinerNeuron):
         """
 
         temp_vcf = None
-        temp_vcf_sim = None
 
         try:
             # Extract parameters from JSON schema task with defaults (matching validator defaults)
@@ -160,50 +154,12 @@ class Miner(BaseMinerNeuron):
             genome_model = task.get("genome-model")
             chromosome = task.get("chromosome")
 
-            # Create temporary file for simulation
-            temp_vcf_sim = tempfile.NamedTemporaryFile(suffix='.vcf', delete=False)
-            temp_vcf_sim.close()
-
             # Create temporary file for final output
             temp_vcf = tempfile.NamedTemporaryFile(suffix='.vcf', delete=False)
             temp_vcf.close()
 
-            # Parse chromosome specification (supports single, multiple, ranges)
-            chrom_value = self._parse_chromosome_spec(chromosome)[0]
-            chromosome_chr = f"chr{chrom_value}"
-
-            # get allele_definition_file path and ensure file exists and is valid
-            allele_definition_file = self._get_allele_file_path(task)
-
-            if not allele_definition_file:
-                raise Exception("CYP2C9 allele definition CSV not available")
-
             # Try stdpopsim simulation
-            if self._simulate_genome(temp_vcf_sim.name, population_model, population, genome_model, chromosome_chr):
-
-                bt.logging.debug(f"Load allele definitions")
-                # iterate vcf with allele_definition_file and write to temp_vcf
-                allele_definitions, reference_calls = self._read_allele_definitions(allele_definition_file)
-
-                if 'allele_one' in task:
-                    allele_one = task.get('allele_one')
-                else:
-                    allele_one = self._pick_random_allele(allele_definitions)
-                    bt.logging.info(f"randomly picked {allele_one} as first allele")
-
-                if 'allele_two' in task:
-                    allele_two = task.get('allele_two')
-                else:
-                    allele_two = self._pick_random_allele(allele_definitions)
-                    bt.logging.info(f"randomly picked {allele_two} as second allele")
-
-                self._iterate_vcf(
-                    temp_vcf_sim.name, temp_vcf.name,
-                    allele_definitions, reference_calls, allele_one, allele_two, chromosome_chr
-                )
-
-                bt.logging.debug(f"Allele definitions loaded into {temp_vcf}")
-
+            if self._simulate_genome(temp_vcf.name, population_model, population, genome_model, chromosome):
                 # Read VCF content from file with error handling
                 try:
                     with open(temp_vcf.name, 'r') as f:
@@ -219,33 +175,30 @@ class Miner(BaseMinerNeuron):
                 return vcf_content
 
         except Exception as e:
-            # Include task context for better debugging
-            task_context = {
-                "population_model": task.get("population_model", "unknown"),
-                "population": task.get("population", "unknown"),
-                "genome_model": task.get("genome-model", "unknown"),
-                "chromosome": task.get("chromosome", "unknown")
-            }
-            raise Exception(f"VCF generation error for task {task_context}: {e}")
+            raise Exception(f"VCF generation error for task {task}: {e}")
+
         finally:
             # Ensure cleanup of temporary files in all cases
             try:
                 if os.path.exists(temp_vcf.name):
                     os.unlink(temp_vcf.name)
 
-                if os.path.exists(temp_vcf_sim.name):
-                    os.unlink(temp_vcf_sim.name)
-
-                ts_file = temp_vcf_sim.name + ".ts"
+                ts_file = temp_vcf.name + ".ts"
                 if os.path.exists(ts_file):
                     os.unlink(ts_file)
+
             except Exception as cleanup_error:
                 bt.logging.warning(f"Error cleaning up temp files: {cleanup_error}")
 
     def _simulate_genome(self, vcf_name: str, population_model: str,
-                         population: str, genome_model: str, chromosome_chr: str) -> bool:
+                         population: str, genome_model: str, chromosome: Any) -> bool:
         """Run stdpopsim simulation."""
         try:
+
+            # Parse chromosome specification (supports single, multiple, ranges)
+            chrom_value = self._parse_chromosome_spec(chromosome)[0]
+            chromosome_chr = f"chr{chrom_value}"
+
             species_name = "HomSap"
 
             # Get species with caching and specific error handling
@@ -462,292 +415,6 @@ class Miner(BaseMinerNeuron):
             return [chrom_str]
 
         return []
-
-    def _calculate_file_md5(self, file_path: str) -> str:
-        """
-        Calculate MD5 hash of a file.
-
-        Args:
-            file_path: Path to the file
-
-        Returns:
-            MD5 hash as hexadecimal string
-        """
-        hash_md5 = hashlib.md5()
-        try:
-            with open(file_path, "rb") as f:
-                for chunk in iter(lambda: f.read(4096), b""):
-                    hash_md5.update(chunk)
-            return hash_md5.hexdigest()
-        except Exception as e:
-            bt.logging.error(f"Error calculating MD5 for {file_path}: {e}")
-            return ""
-
-    def _verify_file_integrity(self, csv_path: str, md5_path: str) -> bool:
-        """
-        Verify file integrity by comparing calculated MD5 with stored MD5.
-
-        Args:
-            csv_path: Path to the CSV file
-            md5_path: Path to the MD5 file
-
-        Returns:
-            True if file exists and MD5 matches, False otherwise
-        """
-        if not os.path.exists(csv_path):
-            return False
-
-        if not os.path.exists(md5_path):
-            bt.logging.warning(f"MD5 file not found at {md5_path}")
-            return False
-
-        try:
-            # Read expected MD5 from file
-            with open(md5_path, 'r') as f:
-                expected_md5 = f.read().strip().split()[0]  # Handle format like "hash filename"
-
-            # Calculate actual MD5
-            actual_md5 = self._calculate_file_md5(csv_path)
-
-            if not actual_md5:
-                return False
-
-            # Compare MD5s
-            if actual_md5.lower() == expected_md5.lower():
-                bt.logging.info(f"MD5 verification passed for {csv_path}")
-                return True
-            else:
-                bt.logging.warning(f"MD5 mismatch for {csv_path}: expected {expected_md5}, got {actual_md5}")
-                return False
-
-        except Exception as e:
-            bt.logging.error(f"Error verifying file integrity: {e}")
-            return False
-
-    def _download_file(self, url: str, file_path: str, max_retries: int = None) -> bool:
-        """
-        Download a file from URL to local path with retry logic.
-
-        Args:
-            url: URL to download from
-            file_path: Local path to save the file
-            max_retries: Maximum number of retry attempts (default: MAX_RETRIES)
-
-        Returns:
-            True if download successful, False otherwise
-        """
-        # Use class constant if not specified
-        if max_retries is None:
-            max_retries = self.MAX_RETRIES
-
-        for attempt in range(max_retries):
-            try:
-                bt.logging.info(f"Downloading {url} to {file_path} (attempt {attempt + 1}/{max_retries})")
-                urllib.request.urlretrieve(url, file_path)
-                bt.logging.info(f"Successfully downloaded {file_path}")
-                return True
-            except urllib.error.URLError as e:
-                if attempt < max_retries - 1:
-                    wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s, etc.
-                    bt.logging.warning(
-                        f"Download attempt {attempt + 1} failed: {e}, "
-                        f"retrying in {wait_time}s..."
-                    )
-                    time.sleep(wait_time)
-                else:
-                    bt.logging.error(f"Error downloading {url} after {max_retries} attempts: {e}")
-                    return False
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    wait_time = 2 ** attempt
-                    bt.logging.warning(
-                        f"Unexpected error on attempt {attempt + 1}: {e}, "
-                        f"retrying in {wait_time}s..."
-                    )
-                    time.sleep(wait_time)
-                else:
-                    bt.logging.error(f"Unexpected error downloading {url} after {max_retries} attempts: {e}")
-                    return False
-
-        return False
-
-    def _get_allele_file_path(self, task_data: Dict) -> Optional[str]:
-        """
-        Get file path and ensure the allele definition file exists and is valid.
-        Checks for file and MD5, verifies integrity, and downloads if needed.
-
-        Returns:
-            Path to the CSV file if available, None otherwise
-        """
-        # Use the data directory relative to project root
-        data_dir = os.path.join(PROJECT_ROOT, "data")
-
-        # Create data directory if it doesn't exist
-        os.makedirs(data_dir, exist_ok=True)
-
-        csv_filename = "allele_file.cached.csv"
-
-        csv_path = os.path.join(data_dir, csv_filename)
-        md5_path = os.path.join(data_dir, f"{csv_filename}.md5")
-
-        csv_url = task_data['alleles']
-        md5_url = task_data['alleles_md5']
-
-        # Download MD5 file first
-        if not self._download_file(md5_url, md5_path):
-            bt.logging.error("Failed to download MD5 file")
-            return None
-
-        # Check if both files exist and verify integrity
-        if os.path.exists(csv_path) and os.path.exists(md5_path):
-            if self._verify_file_integrity(csv_path, md5_path):
-                bt.logging.info(f"Using existing allele definition file: {csv_path}")
-                return csv_path
-            else:
-                bt.logging.warning("MD5 verification failed, will re-download files")
-                # Remove invalid files
-                try:
-                    if os.path.exists(csv_path):
-                        os.remove(csv_path)
-                except Exception as e:
-                    bt.logging.warning(f"Error removing invalid files: {e}")
-
-        # Download files if missing or invalid
-        bt.logging.info("Downloading allele definition files...")
-
-        # Download CSV file
-        if not self._download_file(csv_url, csv_path):
-            bt.logging.error("Failed to download CSV file")
-            return None
-
-        # Verify integrity of downloaded file
-        if not self._verify_file_integrity(csv_path, md5_path):
-            bt.logging.error("Downloaded file failed MD5 verification")
-            return None
-
-        bt.logging.info(f"Successfully downloaded allele definition file: {csv_path}")
-        return csv_path
-
-    def _read_allele_definitions(self, allele_def_file):
-        """
-        reads a slightly cleaned up CSV file of allele definitions from PharmGKB
-        and outputs the allele definitions alongside default values, so
-        that the alleles can be injected into simulated VCF files
-
-        Returns the allele definitions and reference calls as tuple
-        """
-        allele_definitions = {}
-        reference_calls = []
-
-        for i, line in enumerate(open(allele_def_file, 'r')):
-            if i == 0:
-                positions = line.strip('\n').split("\t")[1:]
-            if i > 1:  # ignore location & RSID header
-                single_allele = line.strip("\n").split("\t")
-                allele_name = single_allele[0]
-                allele_definition = single_allele[1:]
-                allele_definitions[allele_name] = {}
-                for j, variant in enumerate(allele_definition):
-                    if variant != '':
-                        allele_definitions[allele_name][positions[j]] = variant
-                    else:
-                        allele_definitions[allele_name][positions[j]] = reference_calls[positions[j]]
-                if i == 2:
-                    reference_calls = allele_definitions[allele_name]
-        return (allele_definitions, reference_calls)
-
-    def _construct_record(self, reference_calls, allele_definitions,
-                          allele_one, allele_two, allele_pos,
-                          chromosome):
-        """
-        construct VCF record to inject into file based on alleles, pass:
-        1. reference calls
-        2. full allele definitions
-        3. name of allele 1
-        4. name of allele 2
-        5. position of allele
-        6. the chromosome (in 'chrX' format)
-
-        Returns a single VCF record/row with the corresponding two alleles requested
-        """
-        # start with substitution creation, get ref variant and both calls from alleles
-        ref_allele = reference_calls[allele_pos]
-        alt_one = allele_definitions[allele_one][allele_pos]
-        alt_two = allele_definitions[allele_two][allele_pos]
-        # print(ref_allele, alt_one, alt_two)
-        # check if we need to make one or two alt alleles (mostly will be one)
-        # create list of alt alleles
-        if len(set([ref_allele, alt_one, alt_two])) == 1:
-            # print('both are ref')
-            alt = [vcfpy.Substitution('SNV', random.choice('ATCG'))]
-            gt = '0|0'
-        elif len(set([ref_allele, alt_one, alt_two])) == 2:
-            # print('got only one alt allele')
-            if alt_one == ref_allele:
-                alt = [vcfpy.Substitution('SNV', alt_two)]
-                gt = '0|1'
-            else:
-                alt = [vcfpy.Substitution('SNV', alt_one)]
-                gt = '1|0'
-        else:
-            # print('got two alt alleles')
-            alt = [vcfpy.Substitution('SNV', alt_one), vcfpy.Substitution('SNV', alt_two)]
-            gt = '1|2'
-
-        # create genotype call
-        call = vcfpy.Call('tsk_0', {'GT': gt})
-
-        record = vcfpy.Record(chromosome,
-                              int(allele_pos),
-                              [],
-                              ref_allele,
-                              alt,
-                              None, ["PASS"],
-                              {},
-                              ["GT"],
-                              [call])
-        return record
-
-    def _iterate_vcf(self, infile, outfile, allele_definitions,
-                     reference_calls, allele_one, allele_two, chromosome):
-        """
-        open a VCF file, iterate over it, replace/add the variants as needed
-        and then write output to new file
-        """
-
-        reader = vcfpy.Reader.from_path(infile)
-
-        # Build and print header
-        # print(reader.header)
-        # print(reader.header.samples.names)
-        contig_length = list(reader.header.get_lines('contig'))[0].length
-        reader.header.add_contig_line({'ID': chromosome, 'length': int(contig_length)})
-
-        # if simulation randomly generated variants for positions of interest,
-        # we want to skip these to replace them with our pharma markers
-        skip_positions = list(reference_calls.keys())
-
-        writer = vcfpy.Writer.from_path(outfile, reader.header)
-
-        # write all the existing records, except where they conflict with our target allele
-        for record in reader:
-            if record.POS not in skip_positions:
-                record.CHROM = chromosome
-                record.ID = "."
-                writer.write_record(record)
-
-        # write our own alleles
-        for entry in reference_calls:
-            new_record = self._construct_record(reference_calls,
-                                                allele_definitions,
-                                                allele_one,
-                                                allele_two,
-                                                entry,
-                                                chromosome)
-            writer.write_record(new_record)
-
-    def _pick_random_allele(self, allele_definitions):
-        return random.choice(list(allele_definitions.keys()))
 
     async def blacklist(self, synapse: niome_subnet.protocol.GenomicsTaskSynapse) -> Tuple[bool, str]:
         """
