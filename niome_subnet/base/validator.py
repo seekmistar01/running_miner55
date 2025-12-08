@@ -31,6 +31,7 @@ from traceback import print_exception
 
 from niome_subnet.base.neuron import BaseNeuron
 from niome_subnet.base.utils.weight_utils import (
+    process_scores,
     process_weights_for_netuid,
     convert_weights_and_uids_for_emit,
 )  # TODO: Replace when bittensor switches to numpy
@@ -243,16 +244,17 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Calculate the average reward for each uid across non-zero values.
         # Replace any NaN values with 0.
-        # Compute the norm of the scores
-        scores = np.nan_to_num(self.scores) ** 2
-        norm = np.linalg.norm(scores, ord=1, axis=0, keepdims=True)
+        # Compute the norm
+        scores = np.nan_to_num(self.scores)
+        processed_scores = process_scores(scores)
+        norm = np.linalg.norm(processed_scores, ord=1, axis=0, keepdims=True)
 
         # Check if the norm is zero or contains NaN values
         if np.any(norm == 0) or np.isnan(norm).any():
             norm = np.ones_like(norm)  # Avoid division by zero or NaN
 
         # Compute raw_weights safely
-        raw_weights = self.scores / norm
+        raw_weights = processed_scores / norm
 
         bt.logging.debug("raw_weights", raw_weights)
         bt.logging.debug("raw_weight_uids", str(self.metagraph.uids.tolist()))

@@ -61,3 +61,16 @@ PHARMACOGENE_REGIONS = {
 }
 
 DRUGS = ["warfarin", "clopidogrel", "simvastatin", "metoprolol", "tamoxifen"]
+
+SCORE_DISTRIBUTION = {
+    1: 0.40,   # 40%
+    2: 0.10,   # 10%
+    3: 0.06,   # 6%
+    4: 0.04,   # 4%
+    5: 0.03,   # 3%
+    6: 0.025,  # 2.5%
+    7: 0.02,   # 2%
+    8: 0.015,  # 1.5%
+    9: 0.01,   # 1%
+    10: 0.01   # 1%
+}
