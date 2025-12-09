@@ -18,7 +18,8 @@ from niome_subnet.utils.constants import (
     PHENOTYPES,
     CANONICAL_PHENOTYPES,
     PHARMACOGENE_REGIONS,
-    DRUGS
+    DRUGS,
+    ALLELES
 )   
 
 def validate_response(response: GenomicsTaskSynapse, task: GenomicSimulationTask) -> float:

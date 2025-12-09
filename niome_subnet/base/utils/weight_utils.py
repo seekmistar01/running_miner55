@@ -3,6 +3,7 @@ from typing import Tuple, List, Union, Any
 import bittensor as bt
 from numpy import ndarray, dtype, floating
 from niome_subnet.utils.constants import SCORE_DISTRIBUTION
+import math
 
 U32_MAX = 4294967295
 U16_MAX = 65535
@@ -132,43 +133,57 @@ def convert_weights_and_uids_for_emit(
 def process_scores(scores: np.ndarray) -> np.ndarray:
     """
     Convert raw miner scores into a final normalized weight vector:
-    - Top 10 miners receive fixed SCORE_DISTRIBUTION weights.
+    - Top 10 miners receive most revenue according to SCORE_DISTRIBUTION.
     - Remaining miners share the rest using a linear decreasing distribution.
     - Output always sums to exactly 1.0.
     """
-    # Sort miners by score (highest first)
-    sorted_indices = np.argsort(scores)[::-1]
-    n = len(scores)
-    slashing_size = SCORE_DISTRIBUTION.__len__()
+    # Filter positive scores and their indices
+    positive_marks = scores > 0
+    positive_score_num = np.sum(positive_marks)
+    if positive_score_num == 0:
+        return np.zeros_like(scores)
+    
+    # Sort indices by descending scores
+    sorted_indices = np.argsort(-scores)
 
-    processed = np.zeros(n, dtype=np.float32)
+    # compute alpha
+    min_alpha = 0.7
+    scale = 50
+    if positive_score_num <= 10:
+        alpha = 1.0
+    else:
+        arg = (positive_score_num - 10) / scale
+        alpha = 1 - (1 - min_alpha) * math.tanh(arg)
+    print(f"Computed alpha: {alpha}")
 
-    # Top 10: Fixed distribution
-    top10_indices = sorted_indices[:slashing_size]
-    for rank, idx in enumerate(top10_indices, start=1):
-        processed[idx] = SCORE_DISTRIBUTION.get(rank, 0.0)
+    # Top ratios (sum to 1.0)
+    ratios = np.array(list(SCORE_DISTRIBUTION.values()))
+    print(f"SCORE_DISTRIBUTION ratios: {ratios}")
 
-    # Remaining miners: Linear distribution
-    remaining_indices = sorted_indices[slashing_size:]
-    k = len(remaining_indices)
+    weights = np.zeros_like(scores, dtype=np.float32)
 
-    if k > 0:
-        # Amount of weight remaining after top 10 allocation
-        remaining_weight = max(0.0, 1.0 - sum(SCORE_DISTRIBUTION.values()))
+    k = min(10, positive_score_num)
+    top_ratios = ratios[:k]
+    top_sum = np.sum(top_ratios)
+    top_weights = (top_ratios / top_sum) * alpha if positive_score_num < 10 else top_ratios * alpha
 
-        # Linear weights: k, k-1, ..., 1 → normalized to remaining_weight
-        linear = np.arange(k, 0, -1, dtype=np.float32)
-        linear = remaining_weight * (linear / linear.sum())
+    for i in range(k):
+        weights[sorted_indices[i]] = top_weights[i]
+    
 
-        # Assign linear weights
-        processed[remaining_indices] = linear
+    if positive_score_num > 10:
+        rest_alloc = 1.0 - alpha
+        rest_indices = sorted_indices[10:positive_score_num]
+        rest_score = scores[rest_indices]
+        if len(rest_score) > 0:
+            temp = 1
+            softmax = np.exp(rest_score / temp) / np.sum(np.exp(rest_score / temp))
+            rest_weights = softmax * rest_alloc
+            for i, idx in enumerate(rest_indices):
+                weights[idx] = rest_weights[i]
 
-    # Final normalization
-    processed_sum = processed.sum()
-    if processed_sum > 0:
-        processed /= processed_sum
+    return weights
 
-    return processed
 
 
 def process_weights_for_netuid(

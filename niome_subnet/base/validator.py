@@ -244,7 +244,7 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Calculate the average reward for each uid across non-zero values.
         # Replace any NaN values with 0.
-        # Compute the norm
+        # Compute the norm of the scores
         scores = np.nan_to_num(self.scores)
         processed_scores = process_scores(scores)
         norm = np.linalg.norm(processed_scores, ord=1, axis=0, keepdims=True)
