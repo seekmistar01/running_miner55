@@ -1,9 +1,13 @@
-import numpy as np
-from typing import Tuple, List, Union, Any
-import bittensor as bt
-from numpy import ndarray, dtype, floating
-from niome_subnet.utils.constants import SCORE_DISTRIBUTION
 import math
+from typing import Tuple, List, Union, Any
+import numpy as np
+import bittensor as bt
+from niome_subnet.utils.constants import (
+    SCORE_DISTRIBUTION,
+    TOP_MIN_ALPHA,
+    TOP_MIN_ALPHA_SCALE,
+    TOP_MINER_COUNT,
+)
 
 U32_MAX = 4294967295
 U16_MAX = 65535
@@ -40,9 +44,7 @@ def normalize_max_weight(x: np.ndarray, limit: float = 0.1) -> np.ndarray:
         estimation_sum = np.array(
             [(len(values) - i - 1) * estimation[i] for i in range(len(values))]
         )
-        n_values = (
-            estimation / (estimation_sum + cumsum + epsilon) < limit
-        ).sum()
+        n_values = (estimation / (estimation_sum + cumsum + epsilon) < limit).sum()
 
         # Determine the cutoff based on the index
         cutoff_scale = (limit * cumsum[n_values - 1] - epsilon) / (
@@ -89,14 +91,10 @@ def convert_weights_and_uids_for_emit(
 
     if np.min(weights) < 0:
         raise ValueError(
-            "Passed weight is negative cannot exist on chain {}".format(
-                weights
-            )
+            "Passed weight is negative cannot exist on chain {}".format(weights)
         )
     if np.min(uids) < 0:
-        raise ValueError(
-            "Passed uid is negative cannot exist on chain {}".format(uids)
-        )
+        raise ValueError("Passed uid is negative cannot exist on chain {}".format(uids))
     if len(uids) != len(weights):
         raise ValueError(
             "Passed weights and uids must have the same length, got {} and {}".format(
@@ -111,9 +109,7 @@ def convert_weights_and_uids_for_emit(
         weights = [
             float(value) / max_weight for value in weights
         ]  # max-upscale values (max_weight = 1).
-        bt.logging.debug(
-            f"setting on chain max: {max_weight} and weights: {weights}"
-        )
+        bt.logging.debug(f"setting on chain max: {max_weight} and weights: {weights}")
 
     weight_vals = []
     weight_uids = []
@@ -130,62 +126,6 @@ def convert_weights_and_uids_for_emit(
     return weight_uids, weight_vals
 
 
-def process_scores(scores: np.ndarray) -> np.ndarray:
-    """
-    Convert raw miner scores into a final normalized weight vector:
-    - Top 10 miners receive most revenue according to SCORE_DISTRIBUTION.
-    - Remaining miners share the rest using a linear decreasing distribution.
-    - Output always sums to exactly 1.0.
-    """
-    # Filter positive scores and their indices
-    positive_marks = scores > 0
-    positive_score_num = np.sum(positive_marks)
-    if positive_score_num == 0:
-        return np.zeros_like(scores)
-    
-    # Sort indices by descending scores
-    sorted_indices = np.argsort(-scores)
-
-    # compute alpha
-    min_alpha = 0.7
-    scale = 50
-    if positive_score_num <= 10:
-        alpha = 1.0
-    else:
-        arg = (positive_score_num - 10) / scale
-        alpha = 1 - (1 - min_alpha) * math.tanh(arg)
-    print(f"Computed alpha: {alpha}")
-
-    # Top ratios (sum to 1.0)
-    ratios = np.array(list(SCORE_DISTRIBUTION.values()))
-    print(f"SCORE_DISTRIBUTION ratios: {ratios}")
-
-    weights = np.zeros_like(scores, dtype=np.float32)
-
-    k = min(10, positive_score_num)
-    top_ratios = ratios[:k]
-    top_sum = np.sum(top_ratios)
-    top_weights = (top_ratios / top_sum) * alpha if positive_score_num < 10 else top_ratios * alpha
-
-    for i in range(k):
-        weights[sorted_indices[i]] = top_weights[i]
-    
-
-    if positive_score_num > 10:
-        rest_alloc = 1.0 - alpha
-        rest_indices = sorted_indices[10:positive_score_num]
-        rest_score = scores[rest_indices]
-        if len(rest_score) > 0:
-            temp = 1
-            softmax = np.exp(rest_score / temp) / np.sum(np.exp(rest_score / temp))
-            rest_weights = softmax * rest_alloc
-            for i, idx in enumerate(rest_indices):
-                weights[idx] = rest_weights[i]
-
-    return weights
-
-
-
 def process_weights_for_netuid(
     uids,
     weights: np.ndarray,
@@ -195,17 +135,17 @@ def process_weights_for_netuid(
     exclude_quantile: int = 0,
 ) -> Union[
     tuple[
-        ndarray[Any, dtype[Any]],
+        np.ndarray[Any, np.dtype[Any]],
         Union[
             Union[
-                ndarray[Any, dtype[floating[Any]]],
-                ndarray[Any, dtype[complexfloating[Any, Any]]],
+                np.ndarray[Any, np.dtype[np.floating[Any]]],
+                np.ndarray[Any, np.dtype[np.complexfloating[Any, Any]]],
             ],
             Any,
         ],
     ],
-    tuple[ndarray[Any, dtype[Any]], ndarray],
-    tuple[Any, ndarray],
+    tuple[np.ndarray[Any, np.dtype[Any]], np.ndarray],
+    tuple[Any, np.ndarray],
 ]:
     bt.logging.debug("process_weights_for_netuid()")
     bt.logging.debug("weights", weights)
@@ -245,14 +185,10 @@ def process_weights_for_netuid(
         bt.logging.warning(
             "No non-zero weights less then min allowed weight, returning all ones."
         )
-        weights = (
-            np.ones(metagraph.n) * 1e-5
-        )  # creating minimum even non-zero weights
+        weights = np.ones(metagraph.n) * 1e-5  # creating minimum even non-zero weights
         weights[non_zero_weight_idx] += non_zero_weights
         bt.logging.debug("final_weights", weights)
-        normalized_weights = normalize_max_weight(
-            x=weights, limit=max_weight_limit
-        )
+        normalized_weights = normalize_max_weight(x=weights, limit=max_weight_limit)
         return np.arange(len(normalized_weights)), normalized_weights
 
     bt.logging.debug("non_zero_weights", non_zero_weights)
@@ -268,9 +204,7 @@ def process_weights_for_netuid(
     bt.logging.debug("lowest_quantile", lowest_quantile)
 
     # Exclude all weights below the allowed quantile.
-    non_zero_weight_uids = non_zero_weight_uids[
-        lowest_quantile <= non_zero_weights
-    ]
+    non_zero_weight_uids = non_zero_weight_uids[lowest_quantile <= non_zero_weights]
     non_zero_weights = non_zero_weights[lowest_quantile <= non_zero_weights]
     bt.logging.debug("non_zero_weight_uids", non_zero_weight_uids)
     bt.logging.debug("non_zero_weights", non_zero_weights)
@@ -282,3 +216,61 @@ def process_weights_for_netuid(
     bt.logging.debug("final_weights", normalized_weights)
 
     return non_zero_weight_uids, normalized_weights
+
+
+def process_scores(scores: np.ndarray) -> np.ndarray:
+    """
+    Convert raw miner scores into a final normalized weight vector:
+    - Top {TOP_MINER_COUNT} miners receive most revenue according to SCORE_DISTRIBUTION.
+    - Remaining miners share the rest using a linear decreasing distribution.
+    - Output always sums to exactly 1.0.
+    """
+    # Filter positive scores and their indices
+    positive_marks = scores > 0
+    positive_score_num = np.sum(positive_marks)
+    if positive_score_num == 0:
+        return np.zeros_like(scores)
+
+    # Sort indices by descending scores
+    sorted_indices = np.argsort(-scores)
+
+    # compute alpha
+    scale = TOP_MIN_ALPHA_SCALE
+    if positive_score_num <= TOP_MINER_COUNT:
+        alpha = 1.0
+    else:
+        arg = (positive_score_num - TOP_MINER_COUNT) / scale
+        alpha = 1 - (1 - TOP_MIN_ALPHA) * math.tanh(arg)
+
+    bt.logging.info(f"Computed alpha: {alpha}")
+
+    # Top ratios (sum to 1.0)
+    ratios = np.array(list(SCORE_DISTRIBUTION.values()))
+    bt.logging.info(f"SCORE_DISTRIBUTION ratios: {ratios}")
+
+    weights = np.zeros_like(scores, dtype=np.float32)
+
+    k = min(TOP_MINER_COUNT, positive_score_num)
+    top_ratios = ratios[:k]
+    top_sum = np.sum(top_ratios)
+    top_weights = (
+        (top_ratios / top_sum) * alpha
+        if positive_score_num < TOP_MINER_COUNT
+        else top_ratios * alpha
+    )
+
+    for i in range(k):
+        weights[sorted_indices[i]] = top_weights[i]
+
+    if positive_score_num > TOP_MINER_COUNT:
+        rest_alloc = 1.0 - alpha
+        rest_indices = sorted_indices[10:positive_score_num]
+        rest_score = scores[rest_indices]
+        if len(rest_score) > 0:
+            temp = 1
+            softmax = np.exp(rest_score / temp) / np.sum(np.exp(rest_score / temp))
+            rest_weights = softmax * rest_alloc
+            for i, idx in enumerate(rest_indices):
+                weights[idx] = rest_weights[i]
+
+    return weights

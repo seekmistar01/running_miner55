@@ -1,7 +1,6 @@
 # The MIT License (MIT)
 # Copyright © 2023 Yuma Rao
-# TODO(developer): Set your name
-# Copyright © 2023 <your name>
+# Copyright © 2025 genomes.io
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
 # documentation files (the “Software”), to deal in the Software without restriction, including without limitation
@@ -19,6 +18,7 @@
 
 
 import copy
+from niome_subnet.utils.constants import SCORE_EMA_ALPHA
 import numpy as np
 import asyncio
 import argparse
@@ -34,7 +34,7 @@ from niome_subnet.base.utils.weight_utils import (
     process_scores,
     process_weights_for_netuid,
     convert_weights_and_uids_for_emit,
-)  # TODO: Replace when bittensor switches to numpy
+) 
 from niome_subnet.mock import MockDendrite
 from niome_subnet.utils.config import add_validator_args
 
@@ -86,6 +86,8 @@ class BaseValidatorNeuron(BaseNeuron):
         self.thread: Union[threading.Thread, None] = None
         self.lock = asyncio.Lock()
 
+        self.remain_miner_uids = np.array([])
+
     def serve_axon(self):
         """Serve axon to enable external connections."""
 
@@ -106,15 +108,12 @@ class BaseValidatorNeuron(BaseNeuron):
                 pass
 
         except Exception as e:
-            bt.logging.error(
-                f"Failed to create Axon initialize with exception: {e}"
-            )
+            bt.logging.error(f"Failed to create Axon initialize with exception: {e}")
             pass
 
     async def concurrent_forward(self):
         coroutines = [
-            self.forward()
-            for _ in range(self.config.neuron.num_concurrent_forwards)
+            self.forward() for _ in range(self.config.neuron.num_concurrent_forwards)
         ]
         await asyncio.gather(*coroutines)
 
@@ -169,9 +168,7 @@ class BaseValidatorNeuron(BaseNeuron):
         # In case of unforeseen errors, the validator will log the error and continue operations.
         except Exception as err:
             bt.logging.error(f"Error during validation: {str(err)}")
-            bt.logging.debug(
-                str(print_exception(type(err), err, err.__traceback__))
-            )
+            bt.logging.debug(str(print_exception(type(err), err, err.__traceback__)))
 
     def run_in_background_thread(self):
         """
@@ -366,16 +363,13 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Compute forward pass rewards, assumes uids are mutually exclusive.
         # shape: [ metagraph.n ]
-        scattered_rewards: np.ndarray = np.zeros_like(self.scores)
+        scattered_rewards= np.zeros_like(self.scores)
         scattered_rewards[uids_array] = rewards
         bt.logging.debug(f"Scattered rewards: {rewards}")
 
         # Update scores with rewards produced by this step.
         # shape: [ metagraph.n ]
-        alpha: float = self.config.neuron.moving_average_alpha
-        self.scores: np.ndarray = (
-            alpha * scattered_rewards + (1 - alpha) * self.scores
-        )
+        self.scores = SCORE_EMA_ALPHA * scattered_rewards + (1 - SCORE_EMA_ALPHA) * self.scores
         bt.logging.debug(f"Updated moving avg scores: {self.scores}")
 
     def save_state(self):
