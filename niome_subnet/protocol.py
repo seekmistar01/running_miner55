@@ -8,9 +8,7 @@ for drug response prediction tasks using synthetic genomic data.
 import json
 import bittensor as bt
 from typing import Dict, Any, Optional
-
 from niome_subnet.genomics.model import GenomicSimulationTask
-
 
 class GenomicsTaskSynapse(bt.Synapse):
     """Protocol for genomics simulation tasks."""

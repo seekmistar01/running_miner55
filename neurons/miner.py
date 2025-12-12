@@ -90,7 +90,6 @@ class Miner(BaseMinerNeuron):
                 "vcf_hash": vcf_hash,
                 "vcf_length": len(vcf_content),
                 "task_parameters": task_data,
-                "generation_time": elapsed_time,
                 "model_version": "1.0",
                 "timestamp": time.time()
             }

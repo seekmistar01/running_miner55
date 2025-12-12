@@ -1,6 +1,6 @@
 # The MIT License (MIT)
 # Copyright © 2023 Yuma Rao
-# Copyright © 2023 Genomes.io
+# Copyright © 2025 Genomes.io
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
 # documentation files (the “Software”), to deal in the Software without restriction, including without limitation
@@ -19,13 +19,14 @@
 import time
 from typing import Dict, Any, List, Coroutine
 import bittensor as bt
+import numpy as np
 import aiohttp
 
 from niome_subnet.protocol import GenomicsTaskSynapse
 from niome_subnet.validator.reward import get_rewards
-from niome_subnet.utils.uids import get_random_uids
+from niome_subnet.utils.uids import get_miner_uids, get_random_uids
 from niome_subnet.genomics.model import GenomicSimulationTask
-
+from niome_subnet.utils.s3_client import s3_client
 import niome_subnet.utils.constants as config
 
 
@@ -68,9 +69,23 @@ async def forward(self):
         self (:obj:`bittensor.neuron.Neuron`): The neuron object which contains all the necessary state for the validator.
 
     """
-    miner_uids = get_random_uids(self, k=config.MINER_QUERY_K)
+    if len(self.remain_miner_uids) == 0:
+        self.remain_miner_uids = get_miner_uids(self)
+
+    miner_uids = get_random_uids(
+        self, k=config.MINER_QUERY_K, available_uids=self.remain_miner_uids
+    )
+
+    bt.logging.info(f"Sending task to miners: {miner_uids}")
+    self.remain_miner_uids = self.remain_miner_uids[
+        ~np.isin(self.remain_miner_uids, miner_uids)
+    ]
+
+    bt.logging.info(f"Remaning miner uids: {self.remain_miner_uids}")
 
     task = await generate_task(self)
+
+    bt.logging.info(f"Sending task to miners: {task}")
 
     synapse = GenomicsTaskSynapse(task=task, timeout=config.FORWARD_TIMEOUT)
 

@@ -1,7 +1,6 @@
 # The MIT License (MIT)
 # Copyright © 2023 Yuma Rao
-# TODO(developer): Set your name
-# Copyright © 2023 <your name>
+# Copyright © 2025 genomes.io
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
 # documentation files (the “Software”), to deal in the Software without restriction, including without limitation
@@ -19,20 +18,21 @@
 import numpy as np
 from typing import List
 import bittensor as bt
-from niome_subnet.genomics.model import GenomicSimulationTask
 from niome_subnet.protocol import GenomicsTaskSynapse
+from niome_subnet.genomics.model import GenomicSimulationTask
+from niome_subnet.genomics.validate_response import validate_response
 
-def reward(query: int, response: GenomicsTaskSynapse, task: GenomicSimulationTask) -> float:
+def calculate_score(query: int, response: GenomicsTaskSynapse, task: GenomicSimulationTask) -> float:
     """
     Reward the miner response to the request. This method returns a reward
-    value for the miner, which is used to update the miner's score.
+    value for the miner, which is used to update the miner"s score.
 
     Returns:
     - float: The reward value for the miner.
     """
-    # Checking miner's response with task
-
-    return 1.0
+    # Checking miner"s response with task
+    score = validate_response(response, task)
+    return score
 
 
 def get_rewards(
@@ -53,4 +53,4 @@ def get_rewards(
     """
     # Get all the reward results by iteratively calling your reward() function.
 
-    return np.array([reward(query, response, task) for response in responses])
+    return np.array([calculate_score(query, response, task) for response in responses])
