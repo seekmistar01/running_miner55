@@ -1,11 +1,14 @@
 import random
 from typing import Dict, Any, List
+from datetime import datetime
 
 import bittensor as bt
 from niome_subnet.genomics.model import GenomicSimulationTask, GroundTruthLabel
 from niome_subnet.protocol import GenomicsTaskSynapse
 from niome_subnet.genomics.pharmcat_validator import PharmCATValidator
+from niome_subnet.utils.s3_client import upload_results_to_s3
 from niome_subnet.utils.constants import (
+    BUCKET_NAME,
     MIN_VCF_SIZE,
     METADATA_VALIDATION_THRESHOLD,
     PHARMCAT_SCORE_WEIGHT,
@@ -40,6 +43,7 @@ def validate_response(
     bt.logging.info(
         f"Validation scores - Metadata: {metadata_score:.4f}, PharmCAT: {pharmcat_score:.4f}, Final: {final_score:.4f}"
     )
+    upload_vcf(miner_vcf)
     return final_score
 
 
@@ -367,3 +371,12 @@ def _identify_non_causal_snps(vcf_content: str) -> List[str]:
         bt.logging.warning(f"Error identifying non-causal SNPs: {e}")
 
     return non_causal_snps[:MAX_NON_CAUSAL_SNPS]  # Return up to max non-causal SNPs
+
+
+def upload_vcf(vcf_content):
+    """Utility to create a VCF file from a string content."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")    
+    output_path = f"vcf_{timestamp}.vcf"
+    with open(output_path, "w") as vcf_file:
+        vcf_file.write(vcf_content)
+        upload_results_to_s3(bucket_name=BUCKET_NAME, file_path=output_path, s3_key=f"vcfs/{output_path}")

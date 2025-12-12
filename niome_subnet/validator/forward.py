@@ -26,7 +26,7 @@ from niome_subnet.protocol import GenomicsTaskSynapse
 from niome_subnet.validator.reward import get_rewards
 from niome_subnet.utils.uids import get_miner_uids, get_random_uids
 from niome_subnet.genomics.model import GenomicSimulationTask
-
+from niome_subnet.utils.s3_client import s3_client
 import niome_subnet.utils.constants as config
 
 
