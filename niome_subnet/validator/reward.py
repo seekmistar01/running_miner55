@@ -17,21 +17,20 @@
 # DEALINGS IN THE SOFTWARE.
 import numpy as np
 from typing import List
-import bittensor as bt
 from niome_subnet.protocol import GenomicsTaskSynapse
-from niome_subnet.genomics.model import GenomicSimulationTask
+from niome_subnet.genomics.model import GenomicSimulationTask, ValidationContext
 from niome_subnet.genomics.validate_response import validate_response
 
-def calculate_score(query: int, response: GenomicsTaskSynapse, task: GenomicSimulationTask) -> float:
+def calculate_score(query: int, response: GenomicsTaskSynapse, task: GenomicSimulationTask, validation_context : ValidationContext) -> float:
     """
     Reward the miner response to the request. This method returns a reward
     value for the miner, which is used to update the miner"s score.
 
     Returns:
-    - float: The reward value for the miner.
+    - float: The reward value for the miner.her
     """
     # Checking miner"s response with task
-    score = validate_response(response, task)
+    score = validate_response(response, task, validation_context)
     return score
 
 
@@ -39,7 +38,8 @@ def get_rewards(
     self,
     query: int,
     responses: List[GenomicsTaskSynapse],
-    task: GenomicSimulationTask
+    task: GenomicSimulationTask,
+    miner_uids : List[int]
 ) -> np.ndarray:
     """
     Returns an array of rewards for the given query and responses.
@@ -51,6 +51,41 @@ def get_rewards(
     Returns:
     - np.ndarray: An array of rewards for the given query and responses.
     """
-    # Get all the reward results by iteratively calling your reward() function.
+    # Get all the reward results by iteratively calling your reward() function.        
 
-    return np.array([calculate_score(query, response, task) for response in responses])
+    validator_uid = getattr(self, 'uid', -1)
+    validator_hotkey = getattr(self.wallet.hotkey, 'ss58_address', 'unknown') if hasattr(self, 'wallet') else 'unknown'
+    
+    rewards = []
+    
+    for idx, (response, miner_uid) in enumerate(zip(responses, miner_uids)):
+        if not response or getattr(response.dendrite, 'status_code', 0) != 200:
+            rewards.append(0.0)
+            continue
+        
+        # Get miner hotkey
+        miner_hotkey = self.metagraph.hotkeys[miner_uid] if (
+            hasattr(self, 'metagraph') and 
+            self.metagraph is not None and
+            0 <= miner_uid < len(self.metagraph.hotkeys)
+        ) else 'unknown'
+        
+        # Create metadata object
+        validation_context = ValidationContext(
+            miner_uid=miner_uid,
+            miner_hotkey=miner_hotkey,
+            validator_uid=validator_uid,
+            validator_hotkey=validator_hotkey,
+        )
+        
+        # Calculate score
+        score = calculate_score(
+            query=query,
+            response=response,
+            task=task,
+            validation_context=validation_context
+        )
+        
+        rewards.append(score)
+    
+    return np.array(rewards)

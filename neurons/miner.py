@@ -94,18 +94,12 @@ class Miner(BaseMinerNeuron):
                 "timestamp": time.time()
             }
 
-            # Generate signature for answer JSON
-            answer_str = json.dumps(answer_json, sort_keys=True)
-            signature = self._generate_signature(answer_str, 0.0)
-
             # Return VCF content to validator (as required)
             synapse.vcf_content = vcf_content
             synapse.answer_json = answer_json
-            synapse.signature = signature
 
             bt.logging.info(
                 f"Generated VCF file from JSON schema task: {answer_json['vcf_length']} characters, "
-                f"signature: {signature[:16]}..., "
                 f"time: {elapsed_time:.2f}s"
             )
             bt.logging.debug(f"VCF content preview: {vcf_content[:200]}...")
@@ -322,10 +316,6 @@ class Miner(BaseMinerNeuron):
                     metadata_lines.append(f"##genome_model={task['genome-model']}\n")
                 if 'chromosome' in task:
                     metadata_lines.append(f"##chromosome={task['chromosome']}\n")
-                if 'allele_one' in task:
-                    metadata_lines.append(f"##allele_one={task['allele_one']}\n")
-                if 'allele_two' in task:
-                    metadata_lines.append(f"##allele_two={task['allele_two']}\n")
 
             # Insert metadata lines into header
             header_lines[insert_index:insert_index] = metadata_lines
@@ -450,7 +440,6 @@ class Miner(BaseMinerNeuron):
             bt.logging.warning("Received a request without a dendrite or hotkey.")
             return True, "Missing dendrite or hotkey"
 
-        # TODO(developer): Define how miners should blacklist requests.
         uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
         if (
                 not self.config.blacklist.allow_non_registered
@@ -499,7 +488,6 @@ class Miner(BaseMinerNeuron):
             bt.logging.warning("Received a request without a dendrite or hotkey.")
             return 0.0
 
-        # TODO(developer): Define how miners should prioritize requests.
         caller_uid = self.metagraph.hotkeys.index(
             synapse.dendrite.hotkey
         )  # Get the caller index.

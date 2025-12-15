@@ -135,15 +135,6 @@ class MockStatus:
     def __enter__(self):
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
-        pass
-
-    def start(self):
-        pass
-
-    def stop(self):
-        pass
-
     def update(self, *args, **kwargs):
         MockConsole().print(*args, **kwargs)
 
@@ -166,9 +157,6 @@ class MockConsole:
         console.begin_capture()
         console.print(*args, **kwargs)
         self.captured_print = console.end_capture()
-
-    def clear(self, *args, **kwargs):
-        pass
 
     @staticmethod
     def remove_rich_syntax(text: str) -> str:

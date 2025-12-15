@@ -17,7 +17,7 @@
 # DEALINGS IN THE SOFTWARE.
 
 import time
-from typing import Dict, Any, List, Coroutine
+from typing import List
 import bittensor as bt
 import numpy as np
 import aiohttp
@@ -26,37 +26,33 @@ from niome_subnet.protocol import GenomicsTaskSynapse
 from niome_subnet.validator.reward import get_rewards
 from niome_subnet.utils.uids import get_miner_uids, get_random_uids
 from niome_subnet.genomics.model import GenomicSimulationTask
-from niome_subnet.utils.s3_client import s3_client
 import niome_subnet.utils.constants as config
+from niome_subnet.utils.constants import ( BASE_URL)
 
 
 async def generate_task(self) -> GenomicSimulationTask | dict[str, str | int]:
     """Generate a synthetic genomic simulation task."""
 
-    endpoint = f"{config.GENOMIC_STORAGE_URL}/generate"
-
     try:
         async with aiohttp.ClientSession() as session:
-            header = self.build_signed_headers()
-            payload = {}
+            async with session.get(
+                f"{BASE_URL}/api/task",
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as response:
 
-            response = await session.post(
-                endpoint, json=payload, headers=header, timeout=10
-            )
-            response.raise_for_status()
-            return GenomicSimulationTask.model_validate(response.json())
+                if response.status != 200:
+                    raise RuntimeError(
+                        f"Backend returned status {response.status}"
+                    )
 
+                data = await response.json()
+
+                bt.logging.info("Task successfully fetched from backend")
+                return data
+            
     except Exception as e:
         bt.logging.error(f"Error on generating task: {e}, returns the sample data")
-
-        return {
-            "simulator": "stdpopsim",
-            "population_model": "OutOfAfrica_4J17",
-            "population": "CHB",
-            "genome_model": "PyrhoCHB_GRCh38",
-            "chromosome": 10,
-            "output": "vcf",
-        }
+        raise e
 
 
 async def forward(self):
@@ -69,43 +65,45 @@ async def forward(self):
         self (:obj:`bittensor.neuron.Neuron`): The neuron object which contains all the necessary state for the validator.
 
     """
-    if len(self.remain_miner_uids) == 0:
-        self.remain_miner_uids = get_miner_uids(self)
+    try:
+        if len(self.remain_miner_uids) == 0:
+            self.remain_miner_uids = get_miner_uids(self)
 
-    miner_uids = get_random_uids(
-        self, k=config.MINER_QUERY_K, available_uids=self.remain_miner_uids
-    )
+        miner_uids = get_random_uids(
+            self, k=config.MINER_QUERY_K, available_uids=self.remain_miner_uids
+        )
 
-    bt.logging.info(f"Sending task to miners: {miner_uids}")
-    self.remain_miner_uids = self.remain_miner_uids[
-        ~np.isin(self.remain_miner_uids, miner_uids)
-    ]
+        bt.logging.info(f"Sending task to miners: {miner_uids}")
+        self.remain_miner_uids = self.remain_miner_uids[
+            ~np.isin(self.remain_miner_uids, miner_uids)
+        ]
 
-    bt.logging.info(f"Remaning miner uids: {self.remain_miner_uids}")
+        bt.logging.info(f"Remaning miner uids: {self.remain_miner_uids}")
 
-    task = await generate_task(self)
+        task = await generate_task(self)
 
-    bt.logging.info(f"Sending task to miners: {task}")
+        bt.logging.info(f"Sending task to miners: {task}")
 
-    synapse = GenomicsTaskSynapse(task=task, timeout=config.FORWARD_TIMEOUT)
+        synapse = GenomicsTaskSynapse(task=task, timeout=config.FORWARD_TIMEOUT)
 
-    axons = [self.metagraph.axons[uid] for uid in miner_uids]
+        axons = [self.metagraph.axons[uid] for uid in miner_uids]
 
-    # The dendrite client queries the network.
-    responses: List[GenomicsTaskSynapse] = await self.dendrite(
-        axons=axons, synapse=synapse, deserialize=False, timeout=config.FORWARD_TIMEOUT
-    )
+        # The dendrite client queries the network.
+        responses: List[GenomicsTaskSynapse] = await self.dendrite(
+            axons=axons, synapse=synapse, deserialize=False, timeout=config.FORWARD_TIMEOUT
+        )
 
-    # Log the results for monitoring purposes.
-    bt.logging.info(f"Received responses: {responses}")
+        # Log the results for monitoring purposes.
+        bt.logging.info(f"Received responses: {responses}")
 
-    # TODO(developer): Define how the validator scores responses.
-    # Adjust the scores based on responses from miners.
-    rewards = get_rewards(self, query=self.step, responses=responses, task=task)
+        # Adjust the scores based on responses from miners.
+        rewards = get_rewards(self, query=self.step, responses=responses, task=task, miner_uids = miner_uids)
 
-    bt.logging.info(f"Scored responses: {rewards}")
+        bt.logging.info(f"Scored responses: {rewards}")
 
-    # Update the scores.
-    self.update_scores(rewards, miner_uids)
+        # Update the scores.
+        self.update_scores(rewards, miner_uids)
+    except Exception as e:
+        bt.logging.error(f"Error during forward step: {e}")
 
     time.sleep(5)
