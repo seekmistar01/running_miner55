@@ -181,14 +181,10 @@ class PharmCATValidator:
                     if not match_data:
                         # Try alternative keys
                         match_data = results.get("alleles", {})
-                        match_data = results.get("allele_calls", {})
-                    
-                    # Extract phenotype (clinical call) JSON blob
-                    phenotype_data = results.get("phenotype", {})
+                    phenotype_data = results.get("phenotypes", {})
                     if not phenotype_data:
                         # Try alternative keys
                         phenotype_data = results.get("clinical_call", {})
-                        phenotype_data = results.get("phenotype_call", {})
                     
                     return {
                         "match": match_data,  # JSON blob with alleles

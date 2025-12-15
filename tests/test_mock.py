@@ -1,8 +1,9 @@
+import niome_subnet.utils.constants as config
 import pytest
 import asyncio
 import bittensor as bt
-from prompting.mock import MockDendrite, MockMetagraph, MockSubtensor
-from prompting.protocol import PromptingSynapse
+from niome_subnet.mock import MockDendrite, MockMetagraph, MockSubtensor
+from niome_subnet.protocol import GenomicsTaskSynapse
 
 
 @pytest.mark.parametrize("netuid", [1, 2, 3])
@@ -44,15 +45,6 @@ def test_mock_metagraph(n):
         assert axon.ip == mock_metagraph.default_ip
         assert axon.port == mock_metagraph.default_port
 
-
-def test_mock_reward_pipeline():
-    pass
-
-
-def test_mock_neuron():
-    pass
-
-
 @pytest.mark.parametrize("timeout", [0.1, 0.2])
 @pytest.mark.parametrize("min_time", [0, 0.05, 0.1])
 @pytest.mark.parametrize("max_time", [0.1, 0.15, 0.2])
@@ -67,11 +59,18 @@ def test_mock_dendrite_timings(timeout, min_time, max_time, n):
     axons = mock_metagraph.axons
 
     async def run():
+        task = {
+            "simulator": "stdpopsim",
+            "population_model": "OutOfAfrica_4J17",
+            "population": "CHB",
+            "genome_model": "PyrhoCHB_GRCh38",
+            "chromosome": 10,
+            "output": "vcf",
+        }
+
         return await mock_dendrite(
             axons,
-            synapse=PromptingSynapse(
-                roles=["user"], messages=["What is the capital of France?"]
-            ),
+            synapse= GenomicsTaskSynapse(task=task, timeout=config.FORWARD_TIMEOUT),
             timeout=timeout,
         )
 

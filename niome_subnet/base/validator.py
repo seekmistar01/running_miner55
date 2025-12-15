@@ -23,10 +23,12 @@ import numpy as np
 import asyncio
 import argparse
 import threading
+import os
+import requests
 from datetime import datetime, timezone
 import bittensor as bt
 
-from typing import List, Union
+from typing import List, Union, Dict, Any
 from traceback import print_exception
 
 from niome_subnet.base.neuron import BaseNeuron
@@ -105,7 +107,6 @@ class BaseValidatorNeuron(BaseNeuron):
                 )
             except Exception as e:
                 bt.logging.error(f"Failed to serve Axon with exception: {e}")
-                pass
 
         except Exception as e:
             bt.logging.error(f"Failed to create Axon initialize with exception: {e}")
@@ -243,6 +244,7 @@ class BaseValidatorNeuron(BaseNeuron):
         # Replace any NaN values with 0.
         # Compute the norm of the scores
         scores = np.nan_to_num(self.scores)
+        original_scores = np.nan_to_num(self.scores).tolist()
         processed_scores = process_scores(scores)
         norm = np.linalg.norm(processed_scores, ord=1, axis=0, keepdims=True)
 
@@ -278,6 +280,15 @@ class BaseValidatorNeuron(BaseNeuron):
         )
         bt.logging.debug("uint_weights", uint_weights)
         bt.logging.debug("uint_uids", uint_uids)
+
+        # Select Top 3 .vcf files
+        rankings = self._calculate_rankings(raw_weights)
+        top_vcf_files = self._process_vcf_files(rankings[:3])
+        self._submit_validation_result(
+            scores=original_scores,
+            weights=raw_weights.tolist(),
+            vcf_files=top_vcf_files
+        )
 
         # Set the weights on chain via our subtensor connection.
         result, msg = self.subtensor.set_weights(
@@ -393,3 +404,239 @@ class BaseValidatorNeuron(BaseNeuron):
         # self.step = state["step"]
         # self.scores = state["scores"]
         # self.hotkeys = state["hotkeys"]
+
+    def _calculate_rankings(self, scores: List[float]) -> List[Dict[str, Any]]:
+        """
+        Calculate rankings based on scores.
+        
+        Args:
+            scores: List of scores for each miner
+        
+        Returns:
+            List of dictionaries with uid, score, and rank
+        """
+        # Get UIDs from metagraph
+        uids = self.metagraph.uids.tolist()
+        
+        # Create list of (uid, score) pairs
+        uid_score_pairs = list(zip(uids, scores))
+        
+        # Sort by score in descending order
+        sorted_pairs = sorted(uid_score_pairs, key=lambda x: x[1], reverse=True)
+        
+        # Create rankings with rank information
+        rankings = []
+        for rank, (uid, score) in enumerate(sorted_pairs, 1):
+            rankings.append({
+                'uid': int(uid),
+                'score': float(score),
+                'rank': rank,
+                'hotkey': self.metagraph.hotkeys[uid] if uid < len(self.metagraph.hotkeys) else 'unknown'
+            })
+        
+        bt.logging.info(f"Calculated rankings: {rankings}")
+        return rankings
+    
+    def _process_vcf_files(self, top_rankings: List[Dict[str, Any]]) -> List[str]:
+        """
+        Process VCF files: Find and keep top 3, return their paths.
+        
+        Args:
+            top_rankings: Top 3 ranking entries
+        
+        Returns:
+            List of paths to top 3 VCF files
+        """
+        vcf_dir = "./vcf_files"  # Default VCF directory
+        top_vcf_files = []
+        
+        for ranking in top_rankings:
+            uid = ranking['uid']
+            hotkey = ranking['hotkey']
+            
+            # Find VCF file for this miner
+            vcf_file = self._find_vcf_for_miner(vcf_dir, uid, hotkey)
+            
+            if vcf_file:
+                top_vcf_files.append(vcf_file)
+                bt.logging.info(f"Found VCF for top miner UID {uid}: {vcf_file}")
+            else:
+                bt.logging.warning(f"No VCF file found for top miner UID {uid}")
+        
+        return top_vcf_files
+    
+    def _find_vcf_for_miner(self, vcf_dir: str, miner_uid: int, miner_hotkey: str) -> str:
+        """
+        Find VCF file for a specific miner.
+        
+        Args:
+            vcf_dir: Directory containing VCF files
+            miner_uid: Miner's UID
+            miner_hotkey: Miner's hotkey
+        
+        Returns:
+            Path to VCF file if found, empty string otherwise
+        """
+        if not os.path.exists(vcf_dir):
+            return ""
+        
+        # Look for matching files
+        for filename in os.listdir(vcf_dir):
+            if filename.endswith('.vcf'):
+                # Check if filename contains both UID and hotkey patterns
+                if miner_hotkey in filename:
+                    return os.path.join(vcf_dir, filename)
+        
+        # If not found with patterns, try more flexible search
+        for filename in os.listdir(vcf_dir):
+            if filename.endswith('.vcf') and f"m{miner_uid}" in filename:
+                return os.path.join(vcf_dir, filename)
+        
+        return ""
+    
+    def _submit_validation_result(
+        self,
+        scores: List[float],
+        weights: List[List[float]],
+        vcf_files: List[str],  # TOP-3 ONLY → FILE UPLOAD ONLY
+    ):
+        """
+        Submit validation results.
+        - Parse metadata from ALL VCFs in ./vcf_files
+        - Upload ONLY top-3 VCF files
+        """
+        backend_url = "https://your-backend-api.com/submit-validation"
+        vcf_dir = "./vcf_files"
+
+        try:
+            # -------------------------------
+            # 1. Parse ALL VCF metadata
+            # -------------------------------
+            miner_meta = {}  # miner_uid -> (task_id, miner_hotkey)
+
+            for fname in os.listdir(vcf_dir):
+                if not fname.endswith(".vcf"):
+                    continue
+
+                path = os.path.join(vcf_dir, fname)
+
+                try:
+                    task_id, miner_hotkey, miner_uid = self._parse_vcf_filename(path)
+                    miner_meta[miner_uid] = (task_id, miner_hotkey)
+                except Exception as e:
+                    bt.logging.warning(f"Skipping invalid VCF {fname}: {e}")
+
+            if not miner_meta:
+                bt.logging.error("No valid VCF metadata found")
+                return
+
+            # -------------------------------
+            # 2. Build payload ONLY for TOP-3
+            # -------------------------------
+            data = []
+            files = []
+            open_files = []
+
+            for vcf_path in vcf_files:
+                if not os.path.exists(vcf_path):
+                    bt.logging.warning(f"Missing top VCF: {vcf_path}")
+                    continue
+
+                task_id, miner_hotkey, miner_uid = self._parse_vcf_filename(vcf_path)
+
+                if miner_uid not in miner_meta:
+                    bt.logging.warning(f"Miner UID {miner_uid} not found in metadata")
+                    continue
+
+                score = float(scores[miner_uid])
+                weight = float(weights[miner_uid][miner_uid])
+
+                data.extend([
+                    ("task_ids", task_id),
+                    ("miners", miner_hotkey),
+                    ("scores", str(score)),
+                    ("weights", str(weight)),
+                ])
+
+                f = open(vcf_path, "rb")
+                open_files.append(f)
+                files.append(
+                    ("files", (os.path.basename(vcf_path), f, "text/vcf"))
+                )
+
+            if not files:
+                bt.logging.error("No top-3 VCFs attached")
+                return
+
+            # -------------------------------
+            # 3. POST
+            # -------------------------------
+            response = requests.post(
+                backend_url,
+                data=data,
+                files=files,
+                timeout=30,
+            )
+
+            if response.status_code == 200:
+                bt.logging.info("Validation result submitted successfully")
+            else:
+                bt.logging.error(
+                    f"Backend submission failed: {response.status_code} | {response.text}"
+                )
+
+        except Exception as e:
+            bt.logging.error(f"Error submitting validation result: {e}")
+
+        finally:
+            for f in open_files:
+                f.close()
+            self._cleanup_vcf_directory()
+
+
+    def _cleanup_vcf_directory(self):
+        """
+        Remove all VCF files from the local vcf_files directory.
+        """
+        vcf_dir = "./vcf_files"
+
+        if not os.path.exists(vcf_dir):
+            bt.logging.debug("VCF directory does not exist, nothing to clean")
+            return
+
+        deleted = 0
+        errors = 0
+
+        for filename in os.listdir(vcf_dir):
+            if not filename.endswith(".vcf"):
+                continue
+
+            file_path = os.path.join(vcf_dir, filename)
+
+            try:
+                os.remove(file_path)
+                deleted += 1
+            except Exception as e:
+                errors += 1
+                bt.logging.error(f"Failed to delete VCF file {filename}: {e}")
+
+        bt.logging.info(
+            f"VCF cleanup finished — deleted={deleted}, errors={errors}"
+        )
+
+    def _parse_vcf_filename(self, vcf_path: str) -> tuple[str, str, int]:
+        """
+        Parse task_id, miner_hotkey, miner_uid from VCF filename.
+
+        Format:
+        vcf_t{task_id}_{timestamp}_{miner_hotkey}_m{miner_uid}_{validator_hotkey}_v{validator_uid}.vcf
+        """
+        filename = os.path.basename(vcf_path)
+
+        parts = filename[:-4].split("_")
+
+        task_id = parts[0][5:]          # vcf_t{task_id}
+        miner_hotkey = parts[2]         # {miner_hotkey}
+        miner_uid = int(parts[3][1:])   # m{uid}
+
+        return task_id, miner_hotkey, miner_uid

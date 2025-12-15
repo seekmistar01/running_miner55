@@ -1,14 +1,13 @@
 import random
+import os
 from typing import Dict, Any, List
 from datetime import datetime
 
 import bittensor as bt
-from niome_subnet.genomics.model import GenomicSimulationTask, GroundTruthLabel
+from niome_subnet.genomics.model import GenomicSimulationTask, GroundTruthLabel, ValidationContext
 from niome_subnet.protocol import GenomicsTaskSynapse
 from niome_subnet.genomics.pharmcat_validator import PharmCATValidator
-from niome_subnet.utils.s3_client import upload_results_to_s3
 from niome_subnet.utils.constants import (
-    BUCKET_NAME,
     MIN_VCF_SIZE,
     METADATA_VALIDATION_THRESHOLD,
     PHARMCAT_SCORE_WEIGHT,
@@ -18,16 +17,13 @@ from niome_subnet.utils.constants import (
     VCF_CHROM_PREFIX,
     VCF_FILEFORMAT_PREFIX,
     VCF_METADATA_KEYS,
-    PHENOTYPES,
-    CANONICAL_PHENOTYPES,
     PHARMACOGENE_REGIONS,
     DRUGS,
-    ALLELES,
 )
 
 
 def validate_response(
-    response: GenomicsTaskSynapse, task: GenomicSimulationTask
+    response: GenomicsTaskSynapse, task: GenomicSimulationTask, validation_context: ValidationContext
 ) -> float:
     drug_name = random.choice(DRUGS)
     miner_vcf = response.vcf_content
@@ -43,7 +39,7 @@ def validate_response(
     bt.logging.info(
         f"Validation scores - Metadata: {metadata_score:.4f}, PharmCAT: {pharmcat_score:.4f}, Final: {final_score:.4f}"
     )
-    upload_vcf(miner_vcf)
+    save_vcf(miner_vcf, validation_context)
     return final_score
 
 
@@ -277,29 +273,8 @@ def _metadata_match(key: str, expected: str, actual: str) -> bool:
 def _run_pharmcat(
     miner_vcf: str, drug_name: str, pharmcat_validator: PharmCATValidator
 ) -> Dict[str, Any]:
-    try:
-        pharmcat_results = pharmcat_validator.get_ground_truth(miner_vcf, drug_name)
-        return pharmcat_results
-    except Exception as e:
-        bt.logging.error(f"PharmCAT error: {e}")
-        synthetic_gt = _generate_synthetic_ground_truth(drug_name)
-        return {
-            "match": {"alleles": synthetic_gt.match},
-            "phenotype": {
-                "clinical_call": synthetic_gt.phenotype,
-                "canonical_phenotype": synthetic_gt.canonical_phenotype,
-            },
-        }
-
-
-def _generate_synthetic_ground_truth(drug_name: str) -> GroundTruthLabel:
-    return GroundTruthLabel(
-        match=random.choice(ALLELES),
-        phenotype=random.choice(PHENOTYPES),
-        canonical_phenotype=random.choice(CANONICAL_PHENOTYPES),
-        drug_name=drug_name,
-    )
-
+    pharmcat_results = pharmcat_validator.get_ground_truth(miner_vcf, drug_name)
+    return pharmcat_results
 
 def extract_gold_label(pharmcat_results: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -373,10 +348,25 @@ def _identify_non_causal_snps(vcf_content: str) -> List[str]:
     return non_causal_snps[:MAX_NON_CAUSAL_SNPS]  # Return up to max non-causal SNPs
 
 
-def upload_vcf(vcf_content):
+def save_vcf(vcf_content, validation_context: ValidationContext, task: GenomicSimulationTask):
     """Utility to create a VCF file from a string content."""
+
+    # Create output directory if it doesn't exist
+    os.makedirs('./vcf_files', exist_ok=True)
+    
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")    
-    output_path = f"vcf_{timestamp}.vcf"
-    with open(output_path, "w") as vcf_file:
-        vcf_file.write(vcf_content)
-        upload_results_to_s3(bucket_name=BUCKET_NAME, file_path=output_path, s3_key=f"vcfs/{output_path}")
+
+    filename = f"vcf_t{task.task_id}_{timestamp}_{validation_context.miner_hotkey}_m{validation_context.miner_uid}_{validation_context.validator_hotkey}_v{validation_context.validator_uid}.vcf"
+
+    output_path = os.path.join("./vcf_files", filename)
+
+    try:
+        with open(output_path, "w") as vcf_file:
+            vcf_file.write(vcf_content)
+        
+        print(f"VCF saved: {filename[:50]}...")  # Show first 50 chars
+        print(f"Filename length: {len(filename)} characters")
+        return output_path
+        
+    except Exception as e:
+        return None    
