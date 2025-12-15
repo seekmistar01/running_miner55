@@ -75,4 +75,4 @@ PHARMACOGENE_REGIONS = {
 DRUGS = ["warfarin", "clopidogrel", "simvastatin", "metoprolol", "tamoxifen"]
 
 # ---- Backend Request -----
-BASE_URL = "http://localhost:5000"
+BASE_URL = "http://niome.genomesio"
