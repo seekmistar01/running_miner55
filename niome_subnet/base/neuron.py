@@ -16,11 +16,9 @@
 # DEALINGS IN THE SOFTWARE.
 
 import copy
-import typing
+from abc import ABC, abstractmethod
 
 import bittensor as bt
-
-from abc import ABC, abstractmethod
 
 # Sync calls set weights and also resyncs the metagraph.
 from niome_subnet.utils.config import check_config, add_args, config
