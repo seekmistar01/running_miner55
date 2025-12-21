@@ -15,11 +15,18 @@
 # THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
-import numpy as np
 from typing import List
+
+import numpy as np
+import bittensor as bt
+
 from niome_subnet.protocol import GenomicsTaskSynapse
 from niome_subnet.genomics.model import GenomicSimulationTask, ValidationContext
-from niome_subnet.genomics.validate_response import validate_response
+from niome_subnet.genomics.vcf_check import is_vcf_valid
+from niome_subnet.genomics.metadata_scoring import compute_metadata_score
+from niome_subnet.genomics.pharmcat_scoring import compute_pharmcat_score
+from niome_subnet.genomics.vcf_handler import save_vcf
+from niome_subnet.utils.constants import PHARMCAT_SCORE_WEIGHT, METADATA_SCORE_WEIGHT
 
 def calculate_score(query: int, response: GenomicsTaskSynapse, task: GenomicSimulationTask, validation_context : ValidationContext) -> float:
     """
@@ -29,9 +36,26 @@ def calculate_score(query: int, response: GenomicsTaskSynapse, task: GenomicSimu
     Returns:
     - float: The reward value for the miner.her
     """
+    vcf_content = response.vcf_content
+
+    if vcf_content is None:
+        bt.logging.error("No VCF content in miner response.")
+        return 0.0
+    
+    if not is_vcf_valid(vcf_content):
+        bt.logging.error("Invalid VCF content in miner response.")
+        return 0.0
+    
+    metadata_score = compute_metadata_score(vcf_content, task)
+    pharmcat_score = compute_pharmcat_score(vcf_content)
+    final_score = (PHARMCAT_SCORE_WEIGHT * pharmcat_score) + (
+        METADATA_SCORE_WEIGHT * metadata_score
+    )
+    save_vcf(vcf_content, validation_context)
+
     # Checking miner"s response with task
-    score = validate_response(response, task, validation_context)
-    return score
+    # score = validate_response(response, task, validation_context)
+    return  final_score
 
 
 def get_rewards(
@@ -39,7 +63,7 @@ def get_rewards(
     query: int,
     responses: List[GenomicsTaskSynapse],
     task: GenomicSimulationTask,
-    miner_uids : List[int]
+    validation_contexts : List[ValidationContext],
 ) -> np.ndarray:
     """
     Returns an array of rewards for the given query and responses.
@@ -52,40 +76,6 @@ def get_rewards(
     - np.ndarray: An array of rewards for the given query and responses.
     """
     # Get all the reward results by iteratively calling your reward() function.        
+    
+    return np.array([calculate_score(query, response, task, validation_context) for response, validation_context in zip(responses, validation_contexts)])
 
-    validator_uid = getattr(self, 'uid', -1)
-    validator_hotkey = getattr(self.wallet.hotkey, 'ss58_address', 'unknown') if hasattr(self, 'wallet') else 'unknown'
-    
-    rewards = []
-    
-    for idx, (response, miner_uid) in enumerate(zip(responses, miner_uids)):
-        if not response or getattr(response.dendrite, 'status_code', 0) != 200:
-            rewards.append(0.0)
-            continue
-        
-        # Get miner hotkey
-        miner_hotkey = self.metagraph.hotkeys[miner_uid] if (
-            hasattr(self, 'metagraph') and 
-            self.metagraph is not None and
-            0 <= miner_uid < len(self.metagraph.hotkeys)
-        ) else 'unknown'
-        
-        # Create metadata object
-        validation_context = ValidationContext(
-            miner_uid=miner_uid,
-            miner_hotkey=miner_hotkey,
-            validator_uid=validator_uid,
-            validator_hotkey=validator_hotkey,
-        )
-        
-        # Calculate score
-        score = calculate_score(
-            query=query,
-            response=response,
-            task=task,
-            validation_context=validation_context
-        )
-        
-        rewards.append(score)
-    
-    return np.array(rewards)

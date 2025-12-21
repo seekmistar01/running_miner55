@@ -25,10 +25,11 @@ import bittensor as bt
 # import base validator class which takes care of most of the boilerplate
 from niome_subnet.base.validator import BaseValidatorNeuron
 
-# Bittensor Validator Template:ff
+# Bittensor Validator forward function
 from niome_subnet.validator import forward
 
 bt.logging.on()
+
 
 class Validator(BaseValidatorNeuron):
     """
@@ -44,7 +45,6 @@ class Validator(BaseValidatorNeuron):
 
         bt.logging.info("load_state()")
         self.load_state()
-
 
     async def forward(self):
         """

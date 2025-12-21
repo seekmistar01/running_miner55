@@ -2,18 +2,6 @@
 
 WeWelcome to the NIOME Subnet! This repository contains all the necessary information to get started, understand our subnet architecture, and contribute.
 
-
-## Table of Contents
-- [Overview](#overview)
-- [Project Structure](#project-structure)
-- [Key Components](#key-components)
-- [Getting Started](#getting-started)
-- [Development](#development)
-- [Contributing](#contributing)
-- [License](#license)
-
----
-
 ## Overview
 
 **NIOME** leverages advanced AI models within the Bittensor network to generate large-scale synthetic genomic data that is statistically indistinguishable from real human DNA. Built on a decentralized, incentive-driven framework, NIOME coordinates miners and validators to continuously produce, evaluate, and refine privacy-preserving genomic profiles—enabling reliable, compliant, and scalable genomic research without exposure to real patient data.

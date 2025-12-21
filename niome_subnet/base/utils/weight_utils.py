@@ -1,7 +1,9 @@
 import math
-from typing import Tuple, List, Union, Any
+from typing import Dict, Tuple, List, Union, Any
+
 import numpy as np
 import bittensor as bt
+
 from niome_subnet.utils.constants import (
     SCORE_DISTRIBUTION,
     TOP_MIN_ALPHA,
@@ -130,8 +132,8 @@ def process_weights_for_netuid(
     uids,
     weights: np.ndarray,
     netuid: int,
-    subtensor: "bittensor.subtensor",
-    metagraph: "bittensor.metagraph" = None,
+    subtensor: "bt.subtensor",
+    metagraph: "bt.metagraph" = None,
     exclude_quantile: int = 0,
 ) -> Union[
     tuple[
@@ -274,3 +276,38 @@ def process_scores(scores: np.ndarray) -> np.ndarray:
                 weights[idx] = rest_weights[i]
 
     return weights
+
+
+def calculate_rankings(mg: Dict[str, Any], scores: List[float]) -> List[Dict[str, Any]]:
+    """
+    Calculate rankings based on scores.
+
+    Args:
+        scores: List of scores for each miner
+
+    Returns:
+        List of dictionaries with uid, score, and rank
+    """
+    # Get UIDs from metagraph
+    uids = mg.uids.tolist()
+
+    # Create list of (uid, score) pairs
+    uid_score_pairs = list(zip(uids, scores))
+
+    # Sort by score in descending order
+    sorted_pairs = sorted(uid_score_pairs, key=lambda x: x[1], reverse=True)
+
+    # Create rankings with rank information
+    rankings = []
+    for rank, (uid, score) in enumerate(sorted_pairs, 1):
+        rankings.append(
+            {
+                "uid": int(uid),
+                "score": float(score),
+                "rank": rank,
+                "hotkey": (mg.hotkeys[uid] if uid < len(mg.hotkeys) else "unknown"),
+            }
+        )
+
+    bt.logging.info(f"Calculated rankings: {rankings}")
+    return rankings
