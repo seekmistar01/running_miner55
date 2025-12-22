@@ -255,10 +255,13 @@ def process_scores(scores: np.ndarray) -> np.ndarray:
     k = min(TOP_MINER_COUNT, positive_score_num)
     top_ratios = ratios[:k]
     top_sum = np.sum(top_ratios)
-    top_weights = (
-        (top_ratios / top_sum) * alpha
-        if positive_score_num < TOP_MINER_COUNT
-        else top_ratios * alpha
+    # If positive_score_num < TOP_MINER_COUNT, normalize top_ratios, else just scale
+    # Use np.divide with where to avoid division by zero
+    norm_top_ratios = np.divide(top_ratios, top_sum, out=np.zeros_like(top_ratios), where=top_sum!=0)
+    top_weights = np.where(
+        positive_score_num < TOP_MINER_COUNT,
+        norm_top_ratios * alpha,
+        top_ratios * alpha
     )
 
     for i in range(k):
