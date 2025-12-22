@@ -17,42 +17,58 @@
 # DEALINGS IN THE SOFTWARE.
 
 import time
+import aiohttp
+import asyncio
 from typing import List
+
 import bittensor as bt
 import numpy as np
-import aiohttp
 
+import niome_subnet.utils.constants as config
 from niome_subnet.protocol import GenomicsTaskSynapse
 from niome_subnet.validator.reward import get_rewards
 from niome_subnet.utils.uids import get_miner_uids, get_random_uids
-from niome_subnet.genomics.model import GenomicSimulationTask
-import niome_subnet.utils.constants as config
-from niome_subnet.utils.constants import ( BASE_URL)
+from niome_subnet.genomics.model import GenomicSimulationTask, ValidationContext, TaskPayload, TaskRequest
+from niome_subnet.utils.constants import ( TASK_REQUEST_TIMEOUT, BASE_DELAY_SECONDS, MAX_TASK_RETRIES, GET_TASK_URL )
 
 
 async def generate_task(self) -> GenomicSimulationTask | dict[str, str | int]:
-    """Generate a synthetic genomic simulation task."""
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{BASE_URL}/api/task",
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as response:
-
-                if response.status != 200:
-                    raise RuntimeError(
-                        f"Backend returned status {response.status}"
-                    )
-
-                data = await response.json()
-
-                bt.logging.info("Task successfully fetched from backend")
-                return data
-            
-    except Exception as e:
-        bt.logging.error(f"Error on generating task: {e}, returns the sample data")
-        raise e
+    """Generate a synthetic genomic simulation task with retry logic and fallback."""
+    payload = TaskPayload(
+        timestamp=time.time(),
+        hotkey=self.wallet.hotkey.ss58_address,
+        netuid=str(self.netuid),
+    )
+    signature = self.wallet.hotkey.sign(payload.model_dump_json()).hex()
+    body = TaskRequest(payload=payload, signature=signature)
+    for attempt in range(1, MAX_TASK_RETRIES + 1):
+        try:
+            async with aiohttp.ClientSession() as client:
+                async with client.post(
+                    GET_TASK_URL,
+                    json=body.model_dump(),
+                    timeout=aiohttp.ClientTimeout(total=TASK_REQUEST_TIMEOUT),
+                ) as response:
+                    if response.status != 200:
+                        raise RuntimeError(
+                            f"Backend returned status {response.status}"
+                        )
+                    data = await response.json()
+                    bt.logging.info("Task successfully fetched from backend")
+                    return data
+        except Exception as e:
+            bt.logging.error(f"Error on generating task (attempt {attempt}): {e}")
+            if attempt < MAX_TASK_RETRIES:
+                delay = BASE_DELAY_SECONDS * (2 ** (attempt - 1))
+                bt.logging.info(f"Retrying in {delay} seconds...")
+                await asyncio.sleep(delay)
+            else:
+                bt.logging.error("All retries failed, returning fallback sample data")
+                # Fallback: return a sample task or raise, as appropriate
+                return {
+                    "task_id": -1,
+                    "description": "Fallback sample task due to repeated failures"
+                }
 
 
 async def forward(self):
@@ -96,8 +112,19 @@ async def forward(self):
         # Log the results for monitoring purposes.
         bt.logging.info(f"Received responses: {responses}")
 
+        # Create Validation Context
+        validation_contexts = [
+            ValidationContext(
+                miner_uid=uid,
+                miner_hotkey=self.metagraph.hotkeys[uid],
+                validator_uid=self.uid,
+                validator_hotkey=self.wallet.hotkey.ss58_address,
+            )
+            for uid in miner_uids
+        ]
+
         # Adjust the scores based on responses from miners.
-        rewards = get_rewards(self, query=self.step, responses=responses, task=task, miner_uids = miner_uids)
+        rewards = get_rewards(self, query=self.step, responses=responses, task=task, validation_context=validation_contexts)
 
         bt.logging.info(f"Scored responses: {rewards}")
 

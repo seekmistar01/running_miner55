@@ -1,5 +1,3 @@
-from typing import List, Tuple, Dict
-
 # ---- General Constants -----
 
 TESTNET_UID = 289
@@ -76,3 +74,16 @@ DRUGS = ["warfarin", "clopidogrel", "simvastatin", "metoprolol", "tamoxifen"]
 
 # ---- Backend Request -----
 BASE_URL = "http://niome.genomesio"
+SUBMIT_URL = "https://niome.genomesio/submit"
+GET_TASK_URL = f"{BASE_URL}/api/task"
+
+# ---- Timeout Values -----
+TASK_REQUEST_TIMEOUT = 10  # seconds
+FORWARD_REQUEST_TIMEOUT = 30  # seconds
+BASE_DELAY_SECONDS = 2  # seconds
+SUBMIT_REQUEST_TIMEOUT = 30  # seconds
+PHARMCAT_TIMEOUT = 60  # seconds
+
+# ---- Other Constants -----
+MAX_TASK_RETRIES = 3
+MAX_SUBMIT_RETRIES = 3

@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from typing import Generic, TypeVar
 
 class GenomicSimulationTask(BaseModel):
     task_id : str
@@ -23,3 +24,22 @@ class ValidationContext:
     miner_hotkey: str
     validator_uid: int
     validator_hotkey: str
+
+class TaskPayload(BaseModel):
+    """Payload structure for task generation requests."""
+    timestamp: float
+    hotkey: str
+    uuid: str
+    netuid: str
+
+
+PayloadType = TypeVar('PayloadType', bound=BaseModel)
+
+class SignedRequest(BaseModel, Generic[PayloadType]):
+    """Generic signed request structure."""
+    payload: PayloadType
+    signature: str
+
+
+TaskRequest = SignedRequest[TaskPayload]
+    

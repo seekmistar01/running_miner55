@@ -13,20 +13,16 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import bittensor as bt
 
-from typing import Dict, Any, Tuple, Optional, List
-import hashlib
-import json
 import os
-import tempfile
 import sys
+import hashlib
 import time
+import tempfile
+from typing import Dict, Any, Tuple, Optional, List
 
+import bittensor as bt
 import stdpopsim
-
-# Bittensor Miner Template:
-import niome_subnet
 
 # import base miner class which takes care of most of the boilerplate
 from niome_subnet.base.miner import BaseMinerNeuron
@@ -78,7 +74,11 @@ class Miner(BaseMinerNeuron):
             # Generate VCF file based on JSON schema task
             vcf_content = self._generate_vcf_from_task(task_data)
 
-            if not vcf_content or not isinstance(vcf_content, str) or len(vcf_content) == 0:
+            if (
+                not vcf_content
+                or not isinstance(vcf_content, str)
+                or len(vcf_content) == 0
+            ):
                 raise Exception("Failed to generate VCF content")
 
             # Check timeout window
@@ -91,7 +91,7 @@ class Miner(BaseMinerNeuron):
                 "vcf_length": len(vcf_content),
                 "task_parameters": task_data,
                 "model_version": "1.0",
-                "timestamp": time.time()
+                "timestamp": time.time(),
             }
 
             # Return VCF content to validator (as required)
@@ -148,14 +148,16 @@ class Miner(BaseMinerNeuron):
             chromosome = task.get("chromosome")
 
             # Create temporary file for final output
-            temp_vcf = tempfile.NamedTemporaryFile(suffix='.vcf', delete=False)
+            temp_vcf = tempfile.NamedTemporaryFile(suffix=".vcf", delete=False)
             temp_vcf.close()
 
             # Try stdpopsim simulation
-            if self._simulate_genome(temp_vcf.name, population_model, population, genome_model, chromosome):
+            if self._simulate_genome(
+                temp_vcf.name, population_model, population, genome_model, chromosome
+            ):
                 # Read VCF content from file with error handling
                 try:
-                    with open(temp_vcf.name, 'r') as f:
+                    with open(temp_vcf.name, "r") as f:
                         vcf_content = f.read()
                 except IOError as e:
                     raise Exception(f"Could not open {temp_vcf.name}: {e}")
@@ -183,8 +185,14 @@ class Miner(BaseMinerNeuron):
             except Exception as cleanup_error:
                 bt.logging.warning(f"Error cleaning up temp files: {cleanup_error}")
 
-    def _simulate_genome(self, vcf_name: str, population_model: str,
-                         population: str, genome_model: str, chromosome: Any) -> bool:
+    def _simulate_genome(
+        self,
+        vcf_name: str,
+        population_model: str,
+        population: str,
+        genome_model: str,
+        chromosome: Any,
+    ) -> bool:
         """Run stdpopsim simulation."""
         try:
 
@@ -201,7 +209,11 @@ class Miner(BaseMinerNeuron):
             model = species.get_demographic_model(population_model)
 
             # Get contig with genetic map with caching and specific error handling
-            contig = species.get_contig(chromosome_chr, genetic_map=genome_model, mutation_rate=model.mutation_rate)
+            contig = species.get_contig(
+                chromosome_chr,
+                genetic_map=genome_model,
+                mutation_rate=model.mutation_rate,
+            )
 
             # Get engine with caching and specific error handling
             engine = stdpopsim.get_engine("msprime")
@@ -239,7 +251,9 @@ class Miner(BaseMinerNeuron):
         except Exception as e:
             raise Exception(f"Unexpected simulation error: {e}")
 
-    def _add_vcf_metadata(self, vcf_content: str, task: Optional[Dict[str, Any]] = None) -> str:
+    def _add_vcf_metadata(
+        self, vcf_content: str, task: Optional[Dict[str, Any]] = None
+    ) -> str:
         """
         Add metadata to VCF content including miner identification, and task parameters.
 
@@ -262,14 +276,14 @@ class Miner(BaseMinerNeuron):
 
             # Find the end of headers (where #CHROM line is - this is the column header)
             # Look for the line that starts with #CHROM (can be at start or after newline)
-            chrom_header_pos = vcf_content.find('#CHROM\t')
+            chrom_header_pos = vcf_content.find("#CHROM\t")
             if chrom_header_pos == -1:
                 # Try without tab (some VCFs use spaces)
-                chrom_header_pos = vcf_content.find('#CHROM')
+                chrom_header_pos = vcf_content.find("#CHROM")
 
             if chrom_header_pos != -1:
                 # Find the start of the #CHROM line (go back to previous newline or start)
-                line_start = vcf_content.rfind('\n', 0, chrom_header_pos)
+                line_start = vcf_content.rfind("\n", 0, chrom_header_pos)
                 if line_start == -1:
                     line_start = 0
                 else:
@@ -284,12 +298,12 @@ class Miner(BaseMinerNeuron):
                 header_section = vcf_content
                 data_section = ""
 
-            header_lines = header_section.split('\n')
+            header_lines = header_section.split("\n")
 
             # Find where to insert metadata (after fileformat, before other headers)
             insert_index = 1  # After ##fileformat line
             for i, line in enumerate(header_lines):
-                if line.startswith('##fileformat'):
+                if line.startswith("##fileformat"):
                     insert_index = i + 1
                     break
 
@@ -308,13 +322,15 @@ class Miner(BaseMinerNeuron):
 
             # Add task properties if provided
             if task:
-                if 'population_model' in task:
-                    metadata_lines.append(f"##population_model={task['population_model']}\n")
-                if 'population' in task:
+                if "population_model" in task:
+                    metadata_lines.append(
+                        f"##population_model={task['population_model']}\n"
+                    )
+                if "population" in task:
                     metadata_lines.append(f"##population={task['population']}\n")
-                if 'genome-model' in task:
+                if "genome-model" in task:
                     metadata_lines.append(f"##genome_model={task['genome-model']}\n")
-                if 'chromosome' in task:
+                if "chromosome" in task:
                     metadata_lines.append(f"##chromosome={task['chromosome']}\n")
 
             # Insert metadata lines into header
@@ -322,11 +338,11 @@ class Miner(BaseMinerNeuron):
 
             # Reconstruct: header with metadata + data section
             # Join header lines and append data section (avoiding double newline)
-            header_with_metadata = '\n'.join(header_lines)
+            header_with_metadata = "\n".join(header_lines)
             if data_section:
                 # Ensure proper newline between header and data
-                if not header_with_metadata.endswith('\n'):
-                    header_with_metadata += '\n'
+                if not header_with_metadata.endswith("\n"):
+                    header_with_metadata += "\n"
                 return header_with_metadata + data_section
             else:
                 return header_with_metadata
@@ -405,7 +421,7 @@ class Miner(BaseMinerNeuron):
 
         return []
 
-    async def blacklist(self, synapse: niome_subnet.protocol.GenomicsTaskSynapse) -> Tuple[bool, str]:
+    async def blacklist(self, synapse: GenomicsTaskSynapse) -> Tuple[bool, str]:
         """
         Determines whether an incoming request should be blacklisted and thus ignored. Your implementation should
         define the logic for blacklisting requests based on your needs and desired security parameters.
@@ -442,8 +458,8 @@ class Miner(BaseMinerNeuron):
 
         uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
         if (
-                not self.config.blacklist.allow_non_registered
-                and synapse.dendrite.hotkey not in self.metagraph.hotkeys
+            not self.config.blacklist.allow_non_registered
+            and synapse.dendrite.hotkey not in self.metagraph.hotkeys
         ):
             # Ignore requests from un-registered entities.
             bt.logging.trace(
@@ -464,7 +480,7 @@ class Miner(BaseMinerNeuron):
         )
         return False, "Hotkey recognized!"
 
-    async def priority(self, synapse: niome_subnet.protocol.GenomicsTaskSynapse) -> float:
+    async def priority(self, synapse: GenomicsTaskSynapse) -> float:
         """
         The priority function determines the order in which requests are handled. More valuable or higher-priority
         requests are processed before others. You should design your own priority mechanism with care.

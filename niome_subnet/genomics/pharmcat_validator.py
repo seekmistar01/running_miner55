@@ -17,12 +17,14 @@
 
 import tempfile
 import os
-from typing import Dict, List, Optional, Any
-import bittensor as bt
-import pharmcat_runner
 import subprocess
 import glob
+from typing import Dict, List, Optional, Any
 
+import bittensor as bt
+import pharmcat_runner
+
+from niome_subnet.utils.constants import PHARMCAT_TIMEOUT
 
 class PharmCATValidator:
     """
@@ -39,8 +41,6 @@ class PharmCATValidator:
         
         Uses Python directly to run PharmaCAT as specified in requirements.
         """
-        self.ground_truth_cache = {}  # Cache for PharmCAT results
-        
         # Initialize pharmcat-runner Python package
         try:
             # pharmcat_runner is a function-based package, no class initialization needed
@@ -56,22 +56,16 @@ class PharmCATValidator:
             bt.logging.error(f"Failed to initialize pharmcat-runner: {e}")
             bt.logging.warning("PharmCAT validation will use fallback mode")
     
-    def get_ground_truth(self, vcf_content: str, drug: str) -> Dict[str, Any]:
+    def get_ground_truth(self, vcf_content: str) -> Dict[str, Any]:
         """
-        Get ground truth from PharmCAT for a VCF file and drug combination.
+        Get ground truth from PharmCAT for a VCF file and combination.
         
         Args:
             vcf_content: VCF file content as string
-            drug: Drug name for pharmacogenomic analysis
             
         Returns:
             Dict containing PharmCAT results with match (alleles) and phenotype (clinical call)
         """
-        cache_key = f"{hash(vcf_content)}_{drug}"
-        if cache_key in self.ground_truth_cache:
-            bt.logging.info(f"Using cached PharmCAT results for {drug}")
-            return self.ground_truth_cache[cache_key]
-
         try:
             # Create temporary VCF file
             with tempfile.NamedTemporaryFile(mode='w', suffix='', delete=False) as temp_vcf:
@@ -86,7 +80,7 @@ class PharmCATValidator:
             cmd = ["bcftools", "sort", temp_vcf_path_unsorted]
 
             with open(temp_vcf_path, "w") as f:
-                result = subprocess.run(cmd, stdout=f, stderr=subprocess.PIPE, text=True, timeout=60)
+                result = subprocess.run(cmd, stdout=f, stderr=subprocess.PIPE, text=True, timeout=PHARMCAT_TIMEOUT)
 
             if result.returncode != 0:
                 raise Exception(f"vcf sort failed: {result.stderr}")
@@ -102,7 +96,7 @@ class PharmCATValidator:
                 os.unlink(temp_vcf_path_unsorted)
 
             # Run PharmCAT
-            pharmcat_results = self._run_pharmcat(temp_vcf_path, drug)
+            pharmcat_results = self._run_pharmcat(temp_vcf_path)
 
             # Clean up temporary file
             if os.path.exists(temp_vcf_path):
@@ -115,38 +109,30 @@ class PharmCATValidator:
                 if os.path.isfile(f):
                     bt.logging.info(f"delete temp VCF files: {f}")
                     os.unlink(f)
-
-            # Cache results
-            self.ground_truth_cache[cache_key] = pharmcat_results
-
-            bt.logging.info(f"PharmCAT analysis completed for {drug}: {pharmcat_results}")
             return pharmcat_results
         except Exception as e:
             bt.logging.error(f"Error running PharmCAT: {str(e)}")
             return {"error": str(e), "match": {}, "phenotype": {}}
     
-    def _run_pharmcat(self, vcf_path: str, drug: str) -> Dict[str, Any]:
+    def _run_pharmcat(self, vcf_path: str) -> Dict[str, Any]:
         """
-        Run PharmCAT on VCF file for specific drug using Python pharmcat-runner.
+        Run PharmCAT on VCF file using Python pharmcat-runner.
         
         Args:
             vcf_path: Path to VCF file
-            drug: Drug name
-            
         Returns:
             Dict with PharmCAT results containing:
             - match: JSON blob with alleles
             - phenotype: JSON blob with clinical call
         """
         try:
-            bt.logging.info(f"Running PharmCAT with Python for drug: {drug}")
-            return self._run_pharmcat_local(vcf_path, drug)
+            return self._run_pharmcat_local(vcf_path)
                 
         except Exception as e:
             bt.logging.error(f"Error running PharmCAT: {str(e)}")
             return {"error": str(e), "match": {}, "phenotype": {}}
     
-    def _run_pharmcat_local(self, vcf_path: str, drug: str) -> Dict[str, Any]:
+    def _run_pharmcat_local(self, vcf_path: str) -> Dict[str, Any]:
         """
         Run PharmCAT using Python pharmcat-runner package.
         
@@ -156,7 +142,6 @@ class PharmCATValidator:
         
         Args:
             vcf_path: Path to VCF file
-            drug: Drug name for pharmacogenomic analysis
             
         Returns:
             Dict with match (alleles) and phenotype (clinical call) JSON blobs
@@ -189,13 +174,12 @@ class PharmCATValidator:
                     return {
                         "match": match_data,  # JSON blob with alleles
                         "phenotype": phenotype_data,  # JSON blob with clinical call
-                        "drug": drug,
                         "raw_output": results
                     }
                 else:
                     # Handle case where results might be a different format
                     # Try to extract from file outputs in tempdir
-                    return self._parse_pharmcat_files(tempdir, drug)
+                    return self._parse_pharmcat_files(tempdir)
                 
         except ImportError:
             bt.logging.error("pharmcat-runner package not installed")
@@ -204,13 +188,12 @@ class PharmCATValidator:
             bt.logging.error(f"Error running PharmCAT with Python: {str(e)}")
             return {"error": str(e), "match": {}, "phenotype": {}}
     
-    def _parse_pharmcat_files(self, output_dir: str, drug: str) -> Dict[str, Any]:
+    def _parse_pharmcat_files(self, output_dir: str) -> Dict[str, Any]:
         """
         Parse PharmaCAT output files if direct Python API doesn't return expected format.
         
         Args:
             output_dir: Directory containing PharmaCAT output files
-            drug: Drug name
             
         Returns:
             Dict with match and phenotype JSON blobs
@@ -258,7 +241,6 @@ class PharmCATValidator:
         return {
             "match": match_data,
             "phenotype": phenotype_data,
-            "drug": drug
         }
     
     def extract_gold_label(self, pharmcat_results: Dict[str, Any]) -> Dict[str, Any]:
@@ -381,7 +363,6 @@ class PharmCATValidator:
     
     def validate_miner_response(self, 
                               vcf_content: str, 
-                              drug: str, 
                               non_causal_snps: List[str] = None,
                               pharmcat_results: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
@@ -389,7 +370,6 @@ class PharmCATValidator:
         
         Args:
             vcf_content: VCF content from miner
-            drug: Drug for pharmacogenomic analysis
             non_causal_snps: Optional list of non-causal SNPs for adversarial testing
             pharmcat_results: Optional pre-computed PharmaCAT results to avoid redundant computation
             
@@ -397,13 +377,12 @@ class PharmCATValidator:
             Dict containing comprehensive validation results
         """
         try:
-            bt.logging.info(f"Starting comprehensive validation for drug: {drug}")
             
             # 1. Get ground truth from PharmCAT (use provided results if available)
             if pharmcat_results is None:
-                pharmcat_results = self.get_ground_truth(vcf_content, drug)
+                pharmcat_results = self.get_ground_truth(vcf_content)
             else:
-                bt.logging.debug(f"Using provided PharmaCAT results for {drug} (avoiding redundant computation)")
+                bt.logging.debug(f"Using provided PharmaCAT results (avoiding redundant computation)")
             gold_label = self.extract_gold_label(pharmcat_results)
             
             # 2. Adversarial QC (if non-causal SNPs provided)
@@ -411,7 +390,7 @@ class PharmCATValidator:
             drift_score = 0.0
             if non_causal_snps:
                 adversarial_vcf = self.create_adversarial_vcf(vcf_content, non_causal_snps)
-                adversarial_results = self.get_ground_truth(adversarial_vcf, drug)
+                adversarial_results = self.get_ground_truth(adversarial_vcf)
                 drift_score = self.measure_drift(pharmcat_results, adversarial_results)
             
             # 4. Calculate final validation score
@@ -425,7 +404,6 @@ class PharmCATValidator:
                 "pharmcat_results": pharmcat_results,
                 "adversarial_results": adversarial_results,
                 "drift_score": drift_score,
-                "drug": drug
             }
             
             bt.logging.info(f"Validation completed - Score: {validation_score:.4f}")

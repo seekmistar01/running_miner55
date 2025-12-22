@@ -5,9 +5,10 @@ This module defines the communication protocols between validators and miners
 for drug response prediction tasks using synthetic genomic data.
 """
 
-import json
-import bittensor as bt
 from typing import Dict, Any, Optional
+
+import bittensor as bt
+
 from niome_subnet.genomics.model import GenomicSimulationTask
 
 class GenomicsTaskSynapse(bt.Synapse):

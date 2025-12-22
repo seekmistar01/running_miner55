@@ -18,27 +18,27 @@
 
 
 import copy
-from niome_subnet.utils.constants import SCORE_EMA_ALPHA
 import numpy as np
 import asyncio
 import argparse
 import threading
-import os
-import requests
 from datetime import datetime, timezone
-import bittensor as bt
-
-from typing import List, Union, Dict, Any
+from typing import List, Union
 from traceback import print_exception
+
+import bittensor as bt
 
 from niome_subnet.base.neuron import BaseNeuron
 from niome_subnet.base.utils.weight_utils import (
     process_scores,
     process_weights_for_netuid,
     convert_weights_and_uids_for_emit,
-) 
+    calculate_rankings,
+)
+from niome_subnet.genomics.vcf_handler import get_top3_vcf_files, submit_validation_result
 from niome_subnet.mock import MockDendrite
 from niome_subnet.utils.config import add_validator_args
+from niome_subnet.utils.constants import SCORE_EMA_ALPHA
 
 
 class BaseValidatorNeuron(BaseNeuron):
@@ -194,7 +194,7 @@ class BaseValidatorNeuron(BaseNeuron):
             self.thread.join(5)
             self.is_running = False
             bt.logging.debug("Stopped")
-    
+
     def build_signed_headers(self) -> dict:
         timestamp = int(datetime.now(tz=timezone.utc).timestamp())
         message = f"<Signature>{timestamp}</Signature>"
@@ -204,7 +204,7 @@ class BaseValidatorNeuron(BaseNeuron):
             "X-Validator-Signature": signature.hex(),
             "X-Validator-Timestamp": str(timestamp),
         }
-    
+
     def __enter__(self):
         self.run_in_background_thread()
         return self
@@ -237,7 +237,7 @@ class BaseValidatorNeuron(BaseNeuron):
         # Check if self.scores contains any NaN values and log a warning if it does.
         if np.isnan(self.scores).any():
             bt.logging.warning(
-                f"Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
+                "Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
             )
 
         # Calculate the average reward for each uid across non-zero values.
@@ -282,12 +282,12 @@ class BaseValidatorNeuron(BaseNeuron):
         bt.logging.debug("uint_uids", uint_uids)
 
         # Select Top 3 .vcf files
-        rankings = self._calculate_rankings(raw_weights)
-        top_vcf_files = self._process_vcf_files(rankings[:3])
-        self._submit_validation_result(
+        rankings = calculate_rankings(self.metagraph, raw_weights)
+        top_vcf_files = get_top3_vcf_files(rankings[:3])
+        submit_validation_result(
             scores=original_scores,
             weights=raw_weights.tolist(),
-            vcf_files=top_vcf_files
+            vcf_files=top_vcf_files,
         )
 
         # Set the weights on chain via our subtensor connection.
@@ -339,49 +339,51 @@ class BaseValidatorNeuron(BaseNeuron):
         # Update the hotkeys.
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
 
-    def update_scores(self, rewards: np.ndarray, uids: List[int]):
-        """Performs exponential moving average on the scores based on the rewards received from the miners."""
-
-        # Check if rewards contains NaN values.
-        if np.isnan(rewards).any():
-            bt.logging.warning(f"NaN values detected in rewards: {rewards}")
+    async def update_scores(self, rewards: np.ndarray, uids: List[int]):
+        """Performs exponential moving average on the scores based on the rewards received from the miners. Thread-safe with asyncio.Lock."""
+        async with self.lock:
+            # Check if rewards contains NaN values.
+            if np.isnan(rewards).any():
+                bt.logging.warning(f"NaN values detected in rewards: {rewards}")
             # Replace any NaN values in rewards with 0.
             rewards = np.nan_to_num(rewards, nan=0)
 
-        # Ensure rewards is a numpy array.
-        rewards = np.asarray(rewards)
+            # Ensure rewards is a numpy array.
+            rewards = np.asarray(rewards)
 
-        # Check if `uids` is already a numpy array and copy it to avoid the warning.
-        if isinstance(uids, np.ndarray):
-            uids_array = uids.copy()
-        else:
-            uids_array = np.array(uids)
+            # Check if `uids` is already a numpy array and copy it to avoid the warning.
+            if isinstance(uids, np.ndarray):
+                uids_array = uids.copy()
+            else:
+                uids_array = np.array(uids)
 
-        # Handle edge case: If either rewards or uids_array is empty.
-        if rewards.size == 0 or uids_array.size == 0:
-            bt.logging.info(f"rewards: {rewards}, uids_array: {uids_array}")
-            bt.logging.warning(
-                "Either rewards or uids_array is empty. No updates will be performed."
+            # Handle edge case: If either rewards or uids_array is empty.
+            if rewards.size == 0 or uids_array.size == 0:
+                bt.logging.info(f"rewards: {rewards}, uids_array: {uids_array}")
+                bt.logging.warning(
+                    "Either rewards or uids_array is empty. No updates will be performed."
+                )
+                return
+
+            # Check if sizes of rewards and uids_array match.
+            if rewards.size != uids_array.size:
+                raise ValueError(
+                    f"Shape mismatch: rewards array of shape {rewards.shape} "
+                    f"cannot be broadcast to uids array of shape {uids_array.shape}"
+                )
+
+            # Compute forward pass rewards, assumes uids are mutually exclusive.
+            # shape: [ metagraph.n ]
+            scattered_rewards = np.zeros_like(self.scores)
+            scattered_rewards[uids_array] = rewards
+            bt.logging.debug(f"Scattered rewards: {rewards}")
+
+            # Update scores with rewards produced by this step.
+            # shape: [ metagraph.n ]
+            self.scores = (
+                SCORE_EMA_ALPHA * scattered_rewards + (1 - SCORE_EMA_ALPHA) * self.scores
             )
-            return
-
-        # Check if sizes of rewards and uids_array match.
-        if rewards.size != uids_array.size:
-            raise ValueError(
-                f"Shape mismatch: rewards array of shape {rewards.shape} "
-                f"cannot be broadcast to uids array of shape {uids_array.shape}"
-            )
-
-        # Compute forward pass rewards, assumes uids are mutually exclusive.
-        # shape: [ metagraph.n ]
-        scattered_rewards= np.zeros_like(self.scores)
-        scattered_rewards[uids_array] = rewards
-        bt.logging.debug(f"Scattered rewards: {rewards}")
-
-        # Update scores with rewards produced by this step.
-        # shape: [ metagraph.n ]
-        self.scores = SCORE_EMA_ALPHA * scattered_rewards + (1 - SCORE_EMA_ALPHA) * self.scores
-        bt.logging.debug(f"Updated moving avg scores: {self.scores}")
+            bt.logging.debug(f"Updated moving avg scores: {self.scores}")
 
     def save_state(self):
         """Saves the state of the validator to a file."""
@@ -405,238 +407,6 @@ class BaseValidatorNeuron(BaseNeuron):
         # self.scores = state["scores"]
         # self.hotkeys = state["hotkeys"]
 
-    def _calculate_rankings(self, scores: List[float]) -> List[Dict[str, Any]]:
-        """
-        Calculate rankings based on scores.
-        
-        Args:
-            scores: List of scores for each miner
-        
-        Returns:
-            List of dictionaries with uid, score, and rank
-        """
-        # Get UIDs from metagraph
-        uids = self.metagraph.uids.tolist()
-        
-        # Create list of (uid, score) pairs
-        uid_score_pairs = list(zip(uids, scores))
-        
-        # Sort by score in descending order
-        sorted_pairs = sorted(uid_score_pairs, key=lambda x: x[1], reverse=True)
-        
-        # Create rankings with rank information
-        rankings = []
-        for rank, (uid, score) in enumerate(sorted_pairs, 1):
-            rankings.append({
-                'uid': int(uid),
-                'score': float(score),
-                'rank': rank,
-                'hotkey': self.metagraph.hotkeys[uid] if uid < len(self.metagraph.hotkeys) else 'unknown'
-            })
-        
-        bt.logging.info(f"Calculated rankings: {rankings}")
-        return rankings
-    
-    def _process_vcf_files(self, top_rankings: List[Dict[str, Any]]) -> List[str]:
-        """
-        Process VCF files: Find and keep top 3, return their paths.
-        
-        Args:
-            top_rankings: Top 3 ranking entries
-        
-        Returns:
-            List of paths to top 3 VCF files
-        """
-        vcf_dir = "./vcf_files"  # Default VCF directory
-        top_vcf_files = []
-        
-        for ranking in top_rankings:
-            uid = ranking['uid']
-            hotkey = ranking['hotkey']
-            
-            # Find VCF file for this miner
-            vcf_file = self._find_vcf_for_miner(vcf_dir, uid, hotkey)
-            
-            if vcf_file:
-                top_vcf_files.append(vcf_file)
-                bt.logging.info(f"Found VCF for top miner UID {uid}: {vcf_file}")
-            else:
-                bt.logging.warning(f"No VCF file found for top miner UID {uid}")
-        
-        return top_vcf_files
-    
-    def _find_vcf_for_miner(self, vcf_dir: str, miner_uid: int, miner_hotkey: str) -> str:
-        """
-        Find VCF file for a specific miner.
-        
-        Args:
-            vcf_dir: Directory containing VCF files
-            miner_uid: Miner's UID
-            miner_hotkey: Miner's hotkey
-        
-        Returns:
-            Path to VCF file if found, empty string otherwise
-        """
-        if not os.path.exists(vcf_dir):
-            return ""
-        
-        # Look for matching files
-        for filename in os.listdir(vcf_dir):
-            if filename.endswith('.vcf'):
-                # Check if filename contains both UID and hotkey patterns
-                if miner_hotkey in filename:
-                    return os.path.join(vcf_dir, filename)
-        
-        # If not found with patterns, try more flexible search
-        for filename in os.listdir(vcf_dir):
-            if filename.endswith('.vcf') and f"m{miner_uid}" in filename:
-                return os.path.join(vcf_dir, filename)
-        
-        return ""
-    
-    def _submit_validation_result(
-        self,
-        scores: List[float],
-        weights: List[List[float]],
-        vcf_files: List[str],  # TOP-3 ONLY → FILE UPLOAD ONLY
-    ):
-        """
-        Submit validation results.
-        - Parse metadata from ALL VCFs in ./vcf_files
-        - Upload ONLY top-3 VCF files
-        """
-        backend_url = "https://your-backend-api.com/submit-validation"
-        vcf_dir = "./vcf_files"
-
-        try:
-            # -------------------------------
-            # 1. Parse ALL VCF metadata
-            # -------------------------------
-            miner_meta = {}  # miner_uid -> (task_id, miner_hotkey)
-
-            for fname in os.listdir(vcf_dir):
-                if not fname.endswith(".vcf"):
-                    continue
-
-                path = os.path.join(vcf_dir, fname)
-
-                try:
-                    task_id, miner_hotkey, miner_uid = self._parse_vcf_filename(path)
-                    miner_meta[miner_uid] = (task_id, miner_hotkey)
-                except Exception as e:
-                    bt.logging.warning(f"Skipping invalid VCF {fname}: {e}")
-
-            if not miner_meta:
-                bt.logging.error("No valid VCF metadata found")
-                return
-
-            # -------------------------------
-            # 2. Build payload ONLY for TOP-3
-            # -------------------------------
-            data = []
-            files = []
-            open_files = []
-
-            for vcf_path in vcf_files:
-                if not os.path.exists(vcf_path):
-                    bt.logging.warning(f"Missing top VCF: {vcf_path}")
-                    continue
-
-                task_id, miner_hotkey, miner_uid = self._parse_vcf_filename(vcf_path)
-
-                if miner_uid not in miner_meta:
-                    bt.logging.warning(f"Miner UID {miner_uid} not found in metadata")
-                    continue
-
-                score = float(scores[miner_uid])
-                weight = float(weights[miner_uid][miner_uid])
-
-                data.extend([
-                    ("task_ids", task_id),
-                    ("miners", miner_hotkey),
-                    ("scores", str(score)),
-                    ("weights", str(weight)),
-                ])
-
-                f = open(vcf_path, "rb")
-                open_files.append(f)
-                files.append(
-                    ("files", (os.path.basename(vcf_path), f, "text/vcf"))
-                )
-
-            if not files:
-                bt.logging.error("No top-3 VCFs attached")
-                return
-
-            # -------------------------------
-            # 3. POST
-            # -------------------------------
-            response = requests.post(
-                backend_url,
-                data=data,
-                files=files,
-                timeout=30,
-            )
-
-            if response.status_code == 200:
-                bt.logging.info("Validation result submitted successfully")
-            else:
-                bt.logging.error(
-                    f"Backend submission failed: {response.status_code} | {response.text}"
-                )
-
-        except Exception as e:
-            bt.logging.error(f"Error submitting validation result: {e}")
-
-        finally:
-            for f in open_files:
-                f.close()
-            self._cleanup_vcf_directory()
 
 
-    def _cleanup_vcf_directory(self):
-        """
-        Remove all VCF files from the local vcf_files directory.
-        """
-        vcf_dir = "./vcf_files"
 
-        if not os.path.exists(vcf_dir):
-            bt.logging.debug("VCF directory does not exist, nothing to clean")
-            return
-
-        deleted = 0
-        errors = 0
-
-        for filename in os.listdir(vcf_dir):
-            if not filename.endswith(".vcf"):
-                continue
-
-            file_path = os.path.join(vcf_dir, filename)
-
-            try:
-                os.remove(file_path)
-                deleted += 1
-            except Exception as e:
-                errors += 1
-                bt.logging.error(f"Failed to delete VCF file {filename}: {e}")
-
-        bt.logging.info(
-            f"VCF cleanup finished — deleted={deleted}, errors={errors}"
-        )
-
-    def _parse_vcf_filename(self, vcf_path: str) -> tuple[str, str, int]:
-        """
-        Parse task_id, miner_hotkey, miner_uid from VCF filename.
-
-        Format:
-        vcf_t{task_id}_{timestamp}_{miner_hotkey}_m{miner_uid}_{validator_hotkey}_v{validator_uid}.vcf
-        """
-        filename = os.path.basename(vcf_path)
-
-        parts = filename[:-4].split("_")
-
-        task_id = parts[0][5:]          # vcf_t{task_id}
-        miner_hotkey = parts[2]         # {miner_hotkey}
-        miner_uid = int(parts[3][1:])   # m{uid}
-
-        return task_id, miner_hotkey, miner_uid
