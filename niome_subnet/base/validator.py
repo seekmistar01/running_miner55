@@ -69,7 +69,7 @@ class BaseValidatorNeuron(BaseNeuron):
         # Set up initial scoring weights for validation
         bt.logging.info("Building validation weights.")
         self.scores = np.zeros(self.metagraph.n, dtype=np.float32)
-
+        self.file_names = np.array([""] * self.metagraph.n, dtype=object)
         # Init sync with the network. Updates the metagraph.
         self.sync()
 
@@ -345,11 +345,18 @@ class BaseValidatorNeuron(BaseNeuron):
             # Check if rewards contains NaN values.
             if np.isnan(rewards).any():
                 bt.logging.warning(f"NaN values detected in rewards: {rewards}")
-            # Replace any NaN values in rewards with 0.
-            rewards = np.nan_to_num(rewards, nan=0)
 
-            # Ensure rewards is a numpy array.
-            rewards = np.asarray(rewards)
+            # Split rewards (float, str) into numeric scores and file name arrays.
+            if len(rewards) == 0:
+                reward_scores = np.array([], dtype=np.float32)
+                file_names = np.array([], dtype=object)
+            else:
+                reward_scores_list, file_names_list = zip(*rewards)
+                reward_scores = np.array(reward_scores_list, dtype=np.float32)
+                file_names = np.array(file_names_list, dtype=object)
+
+            # Replace any NaN values in rewards with 0.
+            reward_scores = np.nan_to_num(reward_scores, nan=0)
 
             # Check if `uids` is already a numpy array and copy it to avoid the warning.
             if isinstance(uids, np.ndarray):
@@ -357,27 +364,37 @@ class BaseValidatorNeuron(BaseNeuron):
             else:
                 uids_array = np.array(uids)
 
+            # Update `self.file_names` for the corresponding uids.
+            try:
+                if file_names.size == uids_array.size:
+                    self.file_names[uids_array] = file_names
+                else:
+                    bt.logging.warning(
+                        "Mismatch between file_names and uids size; skipping file_names update."
+                    )
+            except Exception as e:
+                bt.logging.error(f"Failed to update file_names: {e}")
+
             # Handle edge case: If either rewards or uids_array is empty.
-            if rewards.size == 0 or uids_array.size == 0:
-                bt.logging.info(f"rewards: {rewards}, uids_array: {uids_array}")
+            if reward_scores.size == 0 or uids_array.size == 0:
+                bt.logging.info(f"rewards: {reward_scores}, uids_array: {uids_array}")
                 bt.logging.warning(
                     "Either rewards or uids_array is empty. No updates will be performed."
                 )
                 return
 
             # Check if sizes of rewards and uids_array match.
-            if rewards.size != uids_array.size:
+            if reward_scores.size != uids_array.size:
                 raise ValueError(
-                    f"Shape mismatch: rewards array of shape {rewards.shape} "
+                    f"Shape mismatch: rewards array of shape {reward_scores.shape} "
                     f"cannot be broadcast to uids array of shape {uids_array.shape}"
                 )
 
             # Compute forward pass rewards, assumes uids are mutually exclusive.
             # shape: [ metagraph.n ]
             scattered_rewards = np.zeros_like(self.scores)
-            scattered_rewards[uids_array] = rewards
-            bt.logging.debug(f"Scattered rewards: {rewards}")
-
+            scattered_rewards[uids_array] = reward_scores
+            bt.logging.debug(f"Scattered rewards: {reward_scores}")
             # Update scores with rewards produced by this step.
             # shape: [ metagraph.n ]
             self.scores = (

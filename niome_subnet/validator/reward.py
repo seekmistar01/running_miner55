@@ -28,7 +28,7 @@ from niome_subnet.genomics.pharmcat_scoring import compute_pharmcat_score
 from niome_subnet.genomics.vcf_handler import save_vcf
 from niome_subnet.utils.constants import PHARMCAT_SCORE_WEIGHT, METADATA_SCORE_WEIGHT
 
-def calculate_score(query: int, response: GenomicsTaskSynapse, task: GenomicSimulationTask, validation_context : ValidationContext) -> float:
+def calculate_score(query: int, response: GenomicsTaskSynapse, task: GenomicSimulationTask, validation_context : ValidationContext, file_name: str) -> tuple[float, str]:
     """
     Reward the miner response to the request. This method returns a reward
     value for the miner, which is used to update the miner"s score.
@@ -51,11 +51,11 @@ def calculate_score(query: int, response: GenomicsTaskSynapse, task: GenomicSimu
     final_score = (PHARMCAT_SCORE_WEIGHT * pharmcat_score) + (
         METADATA_SCORE_WEIGHT * metadata_score
     )
-    save_vcf(vcf_content, validation_context)
+    file_name = save_vcf(vcf_content, validation_context, task, file_name)
 
     # Checking miner"s response with task
     # score = validate_response(response, task, validation_context)
-    return  final_score
+    return  final_score, file_name
 
 
 def get_rewards(
@@ -77,5 +77,5 @@ def get_rewards(
     """
     # Get all the reward results by iteratively calling your reward() function.        
     
-    return np.array([calculate_score(query, response, task, validation_context) for response, validation_context in zip(responses, validation_contexts)])
+    return np.array([calculate_score(query, response, task, validation_context, self.file_names[validation_context.miner_uid]) for response, validation_context in zip(responses, validation_contexts)])
 
