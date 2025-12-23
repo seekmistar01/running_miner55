@@ -10,11 +10,18 @@ import bittensor as bt
 from niome_subnet.genomics.model import ValidationContext, GenomicSimulationTask
 from niome_subnet.utils.constants import SUBMIT_URL, BASE_DELAY_SECONDS, MAX_SUBMIT_RETRIES, SUBMIT_REQUEST_TIMEOUT
 
-def save_vcf(vcf_content, validation_context: ValidationContext, task: GenomicSimulationTask):
+def save_vcf(vcf_content, validation_context: ValidationContext, task: GenomicSimulationTask, file_name: str):
     """Utility to create a VCF file from a string content."""
     try:
         # Create output directory if it doesn't exist
         os.makedirs('./vcf_files', exist_ok=True)
+
+        # Delete old file
+        if len(file_name) > 0:
+            output_path = os.path.join("./vcf_files", file_name)
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")    
         file_name = f"vcf_t{task.task_id}_{timestamp}_{validation_context.miner_hotkey}_m{validation_context.miner_uid}_{validation_context.validator_hotkey}_v{validation_context.validator_uid}.vcf"
         output_path = os.path.join("./vcf_files", file_name)
@@ -24,7 +31,7 @@ def save_vcf(vcf_content, validation_context: ValidationContext, task: GenomicSi
         
         bt.logging.info(f"VCF saved: {file_name[:50]}...")  # Show first 50 chars
         bt.logging.info(f"Filename length: {len(file_name)} characters")
-        return output_path        
+        return output_path
     except Exception as e:
          bt.logging.error(f"Error saving VCF file: {e}")
          raise ValueError(f"Error saving VCF filename '{file_name}': {e}")
@@ -140,9 +147,7 @@ def submit_validation_result(
     try:
         backend_url = f"{SUBMIT_URL}"
         # Pre-size lists for all possible miner_uids
-        max_uid = len(scores)
-        task_ids = [None] * (max_uid + 1)
-        miner_hotkeys = [None] * (max_uid + 1)
+        data = []
         files = []
         open_files = []
 
@@ -158,22 +163,11 @@ def submit_validation_result(
                 except Exception as e:
                     bt.logging.warning(f"Invalid VCF filename {vcf_path}: {e}")
                     continue
-                # Defensive: check index bounds
-                task_ids[miner_uid] = str(task_id)
-                miner_hotkeys[miner_uid] = str(miner_hotkey)
-
-        # Fill in any missing entries with defaults
-        for task_id in task_ids:
-            if task_id is None:
-                task_id = "unknown"
-            if miner_hotkey is None:
-                miner_hotkey = "unknown"
-
-        if not task_ids:
-            bt.logging.error("No valid VCFs found for data payload")
-            _cleanup_vcf_directory()
-            return
-
+                data.append(("task_ids", task_id))
+                data.append(("miners", miner_hotkey))
+                data.append(("scores", str(scores[miner_uid])))
+                data.append(("weights", str(weights[miner_uid])))
+        
         # 2. Build files payload from top3_vcf_files only
         for vcf_path in top3_vcf_files:
             if not os.path.exists(vcf_path):
@@ -190,14 +184,6 @@ def submit_validation_result(
             bt.logging.error("No top-3 VCFs attached")
             _cleanup_vcf_directory()
             return
-
-        # Build form-data payload as lists (for multi-value fields)
-        data = {
-            "task_ids": task_ids,
-            "miners": miner_hotkeys,
-            "scores": scores,
-            "weights": weights,
-        }
 
         for attempt in range(1, MAX_SUBMIT_RETRIES + 1):
             try:
