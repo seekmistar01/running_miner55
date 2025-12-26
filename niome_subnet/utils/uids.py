@@ -32,14 +32,23 @@ def get_miner_uids(self) -> np.ndarray:
     Filter out uids that are validators in the metagraph.
     """
     uids = []
-    for uid in range(self.snapshot.metagraph.n):
-        if self.snapshot.metagraph.validator_trust[uid] > 0:
+    for uid in range(self.metagraph.n):
+        # skip validators
+        if self.metagraph.validator_trust[uid] > 0:
             continue
 
-        if (
-            self.current_block - self.snapshot.metagraph.last_update[uid]
-            <= self.snapshot.epoch_length
-        ):
+        # get current block (try property, fallback to attribute)
+        try:
+            current_block = int(self.block)
+        except Exception:
+            current_block = int(getattr(self, "current_block", 0))
+
+        # epoch length from config or attribute
+        epoch_length = getattr(self.config.neuron, "epoch_length", None)
+        if epoch_length is None:
+            epoch_length = getattr(self, "epoch_length", 0)
+
+        if (current_block - int(self.metagraph.last_update[uid])) <= epoch_length:
             continue
 
         uids.append(uid)
@@ -60,12 +69,29 @@ def get_random_uids(
     Notes:
         If `k` is larger than the number of available `uids`, set `k` to the number of available `uids`.
     """
-    if not available_uids:
+    # Avoid truth-testing numpy arrays (which raises an error when they contain
+    # multiple elements). Treat None or empty sequence as missing.
+    if available_uids is None or (hasattr(available_uids, "__len__") and len(available_uids) == 0):
         available_uids = get_miner_uids(self)
 
     # If k is larger than the number of available uids, set k to the number of available uids.
-    k = min(k, len(available_uids))
+    # Normalize available_uids to a Python list to make random.sample robust
+    if isinstance(available_uids, np.ndarray):
+        available_list = available_uids.tolist()
+    else:
+        try:
+            available_list = list(available_uids)
+        except Exception:
+            # Fallback: wrap scalar into list
+            available_list = [available_uids]
 
-    # Check if candidate_uids contain enough for querying, if not grab all avaliable uids
-    uids = np.array(random.sample(available_uids, k))
+    # If k is larger than the number of available uids, set k to the number of available uids.
+    k = min(k, len(available_list))
+
+    # If nothing to sample, return empty array.
+    if k == 0 or len(available_list) == 0:
+        return np.array([], dtype=int)
+
+    # Sample and return as numpy array
+    uids = np.array(random.sample(available_list, k))
     return uids
