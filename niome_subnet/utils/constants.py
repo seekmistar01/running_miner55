@@ -73,7 +73,7 @@ PHARMACOGENE_REGIONS = {
 DRUGS = ["warfarin", "clopidogrel", "simvastatin", "metoprolol", "tamoxifen"]
 
 # ---- Backend Request -----
-BASE_URL = "http://72.60.132.2:8888"
+BASE_URL = "http://niome.genomes.io"
 MINER_SCORE_URL = f"{BASE_URL}/api/miner_scores"
 GET_TASK_URL = f"{BASE_URL}/api/tasks"
 S3_UPLOAD_URL = f"{BASE_URL}/api/s3"
