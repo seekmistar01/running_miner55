@@ -19,6 +19,8 @@
 import time
 import aiohttp
 import asyncio
+import uuid
+import json
 from typing import List
 
 import bittensor as bt
@@ -28,7 +30,7 @@ import niome_subnet.utils.constants as config
 from niome_subnet.protocol import GenomicsTaskSynapse
 from niome_subnet.validator.reward import get_rewards
 from niome_subnet.utils.uids import get_miner_uids, get_random_uids
-from niome_subnet.genomics.model import GenomicSimulationTask, ValidationContext, TaskPayload, TaskRequest
+from niome_subnet.genomics.model import GenomicSimulationTask, ValidationContext, TaskPayload
 from niome_subnet.utils.constants import ( TASK_REQUEST_TIMEOUT, BASE_DELAY_SECONDS, MAX_TASK_RETRIES, GET_TASK_URL )
 
 
@@ -37,19 +39,34 @@ async def generate_task(self) -> GenomicSimulationTask | dict[str, str | int]:
     payload = TaskPayload(
         timestamp=time.time(),
         hotkey=self.wallet.hotkey.ss58_address,
+        uuid=str(uuid.uuid4()),
         netuid=str(self.netuid),
     )
-    signature = self.wallet.hotkey.sign(payload.model_dump_json()).hex()
-    body = TaskRequest(payload=payload, signature=signature)
+    timestamp = str(time.time())
+    canonical = json.dumps({
+        'payload': json.dumps(payload.model_dump(), separators=(',', ':'), sort_keys=True),
+        'hotkey': self.wallet.hotkey.ss58_address,
+        'netuid': str(self.netuid),
+        'timestamp': timestamp,
+    }, separators=(',', ':'), sort_keys=True)
+
+    signature = self.wallet.hotkey.sign(canonical).hex()
+
     for attempt in range(1, MAX_TASK_RETRIES + 1):
         try:
             async with aiohttp.ClientSession() as client:
                 async with client.post(
                     GET_TASK_URL,
-                    json=body.model_dump(),
+                    headers=self.build_signature_headers(
+                        signature=signature,
+                        hotkey=self.wallet.hotkey.ss58_address,
+                        timestamp=timestamp,
+                        netuid=str(self.netuid),
+                    ),
+                    json=payload.model_dump(),
                     timeout=aiohttp.ClientTimeout(total=TASK_REQUEST_TIMEOUT),
                 ) as response:
-                    if response.status != 200:
+                    if response.status != 201:
                         raise RuntimeError(
                             f"Backend returned status {response.status}"
                         )
@@ -64,11 +81,7 @@ async def generate_task(self) -> GenomicSimulationTask | dict[str, str | int]:
                 await asyncio.sleep(delay)
             else:
                 bt.logging.error("All retries failed, returning fallback sample data")
-                # Fallback: return a sample task or raise, as appropriate
-                return {
-                    "task_id": -1,
-                    "description": "Fallback sample task due to repeated failures"
-                }
+                raise e
 
 
 async def forward(self):
@@ -94,7 +107,7 @@ async def forward(self):
             ~np.isin(self.remain_miner_uids, miner_uids)
         ]
 
-        bt.logging.info(f"Remaning miner uids: {self.remain_miner_uids}")
+        bt.logging.info(f"Remaining miner uids: {self.remain_miner_uids}")
 
         task = await generate_task(self)
 
@@ -103,6 +116,7 @@ async def forward(self):
         synapse = GenomicsTaskSynapse(task=task, timeout=config.FORWARD_TIMEOUT)
 
         axons = [self.metagraph.axons[uid] for uid in miner_uids]
+        bt.logging.debug(f"Querying axons: {axons}")
 
         # The dendrite client queries the network.
         responses: List[GenomicsTaskSynapse] = await self.dendrite(
@@ -124,12 +138,12 @@ async def forward(self):
         ]
 
         # Adjust the scores based on responses from miners.
-        rewards = get_rewards(self, query=self.step, responses=responses, task=task, validation_context=validation_contexts)
+        rewards = get_rewards(self, query=self.step, responses=responses, task=task, validation_contexts=validation_contexts)
 
         bt.logging.info(f"Scored responses: {rewards}")
 
         # Update the scores.
-        self.update_scores(rewards, miner_uids)
+        await self.update_scores(rewards, miner_uids)
     except Exception as e:
         bt.logging.error(f"Error during forward step: {e}")
 

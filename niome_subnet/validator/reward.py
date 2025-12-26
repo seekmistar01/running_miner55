@@ -36,26 +36,30 @@ def calculate_score(query: int, response: GenomicsTaskSynapse, task: GenomicSimu
     Returns:
     - float: The reward value for the miner.her
     """
-    vcf_content = response.vcf_content
+    try:
+        vcf_content = response.vcf_content
 
-    if vcf_content is None:
-        bt.logging.error("No VCF content in miner response.")
-        return 0.0
-    
-    if not is_vcf_valid(vcf_content):
-        bt.logging.error("Invalid VCF content in miner response.")
-        return 0.0
-    
-    metadata_score = compute_metadata_score(vcf_content, task)
-    pharmcat_score = compute_pharmcat_score(vcf_content)
-    final_score = (PHARMCAT_SCORE_WEIGHT * pharmcat_score) + (
-        METADATA_SCORE_WEIGHT * metadata_score
-    )
-    file_name = save_vcf(vcf_content, validation_context, task, file_name)
+        if vcf_content is None:
+            bt.logging.error("No VCF content in miner response.")
+            return 0.0, ""
 
-    # Checking miner"s response with task
-    # score = validate_response(response, task, validation_context)
-    return  final_score, file_name
+        if not is_vcf_valid(vcf_content):
+            bt.logging.error("Invalid VCF content in miner response.")
+            return 0.0, ""
+        
+        metadata_score = compute_metadata_score(vcf_content, task)
+        pharmcat_score = compute_pharmcat_score(vcf_content)
+        final_score = (PHARMCAT_SCORE_WEIGHT * pharmcat_score) + (
+            METADATA_SCORE_WEIGHT * metadata_score
+        )
+        file_name = save_vcf(vcf_content, validation_context, task, file_name)
+
+        # Checking miner"s response with task
+        # score = validate_response(response, task, validation_context)
+        return final_score, file_name
+    except Exception as e:
+        bt.logging.error(f"Error calculating score: {e}")
+        return 0.0, ""
 
 
 def get_rewards(
@@ -75,7 +79,12 @@ def get_rewards(
     Returns:
     - np.ndarray: An array of rewards for the given query and responses.
     """
-    # Get all the reward results by iteratively calling your reward() function.        
-    
-    return np.array([calculate_score(query, response, task, validation_context, self.file_names[validation_context.miner_uid]) for response, validation_context in zip(responses, validation_contexts)])
+    # Get all the reward results by iteratively calling your reward() function.
+    # Return a Python list of (score, filename) tuples so callers can unzip via zip(*rewards).
+    return [
+        calculate_score(
+            query, response, task, validation_context, self.file_names[validation_context.miner_uid]
+        )
+        for response, validation_context in zip(responses, validation_contexts)
+    ]
 

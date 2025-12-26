@@ -63,13 +63,15 @@ class BaseValidatorNeuron(BaseNeuron):
         if self.config.mock:
             self.dendrite = MockDendrite(wallet=self.wallet)
         else:
-            self.dendrite = bt.dendrite(wallet=self.wallet)
+            self.dendrite = bt.Dendrite(wallet=self.wallet)
         bt.logging.info(f"Dendrite: {self.dendrite}")
 
         # Set up initial scoring weights for validation
         bt.logging.info("Building validation weights.")
         self.scores = np.zeros(self.metagraph.n, dtype=np.float32)
-        self.file_names = np.array([""] * self.metagraph.n, dtype=object)
+        # Ensure metagraph.n is a Python int to avoid numpy's __mul__ dispatch
+        # when multiplying lists by numpy scalar types.
+        self.file_names = np.array([""] * int(self.metagraph.n), dtype=object)
         # Init sync with the network. Updates the metagraph.
         self.sync()
 
@@ -95,7 +97,7 @@ class BaseValidatorNeuron(BaseNeuron):
 
         bt.logging.info("serving ip to chain...")
         try:
-            self.axon = bt.axon(wallet=self.wallet, config=self.config)
+            self.axon = bt.Axon(wallet=self.wallet, config=self.config)
 
             try:
                 self.subtensor.serve_axon(
@@ -285,9 +287,10 @@ class BaseValidatorNeuron(BaseNeuron):
         rankings = calculate_rankings(self.metagraph, raw_weights)
         top_vcf_files = get_top3_vcf_files(rankings[:3])
         submit_validation_result(
+            self,
             scores=original_scores,
             weights=raw_weights.tolist(),
-            vcf_files=top_vcf_files,
+            top3_vcf_files=top_vcf_files,
         )
 
         # Set the weights on chain via our subtensor connection.
@@ -342,18 +345,18 @@ class BaseValidatorNeuron(BaseNeuron):
     async def update_scores(self, rewards: np.ndarray, uids: List[int]):
         """Performs exponential moving average on the scores based on the rewards received from the miners. Thread-safe with asyncio.Lock."""
         async with self.lock:
-            # Check if rewards contains NaN values.
-            if np.isnan(rewards).any():
-                bt.logging.warning(f"NaN values detected in rewards: {rewards}")
-
-            # Split rewards (float, str) into numeric scores and file name arrays.
-            if len(rewards) == 0:
+            # `rewards` is expected to be a list of (score, filename) tuples.
+            if rewards is None or len(rewards) == 0:
                 reward_scores = np.array([], dtype=np.float32)
                 file_names = np.array([], dtype=object)
             else:
                 reward_scores_list, file_names_list = zip(*rewards)
                 reward_scores = np.array(reward_scores_list, dtype=np.float32)
                 file_names = np.array(file_names_list, dtype=object)
+
+            # Check for NaNs in numeric rewards and warn.
+            if reward_scores.size > 0 and np.isnan(reward_scores).any():
+                bt.logging.warning(f"NaN values detected in reward_scores: {reward_scores}")
 
             # Replace any NaN values in rewards with 0.
             reward_scores = np.nan_to_num(reward_scores, nan=0)

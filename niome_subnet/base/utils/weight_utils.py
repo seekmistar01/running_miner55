@@ -132,7 +132,7 @@ def process_weights_for_netuid(
     uids,
     weights: np.ndarray,
     netuid: int,
-    subtensor: "bt.subtensor",
+    subtensor: "bt.Subtensor",
     metagraph: "bt.metagraph" = None,
     exclude_quantile: int = 0,
 ) -> Union[
