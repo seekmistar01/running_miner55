@@ -73,9 +73,10 @@ PHARMACOGENE_REGIONS = {
 DRUGS = ["warfarin", "clopidogrel", "simvastatin", "metoprolol", "tamoxifen"]
 
 # ---- Backend Request -----
-BASE_URL = "http://niome.genomesio"
-SUBMIT_URL = "https://niome.genomesio/submit"
-GET_TASK_URL = f"{BASE_URL}/api/task"
+BASE_URL = "http://72.60.132.2:8888"
+MINER_SCORE_URL = f"{BASE_URL}/api/miner_scores"
+GET_TASK_URL = f"{BASE_URL}/api/tasks"
+S3_UPLOAD_URL = f"{BASE_URL}/api/s3"
 
 # ---- Timeout Values -----
 TASK_REQUEST_TIMEOUT = 10  # seconds
@@ -87,3 +88,7 @@ PHARMCAT_TIMEOUT = 60  # seconds
 # ---- Other Constants -----
 MAX_TASK_RETRIES = 3
 MAX_SUBMIT_RETRIES = 3
+
+CHUNK_SIZE = 5 * 1024 * 1024  # 5 MB
+MAX_CONCURRENT_UPLOADS = 5
+MAX_CHUNK_UPLOAD_RETRIES = 3

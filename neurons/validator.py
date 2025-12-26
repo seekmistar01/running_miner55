@@ -46,6 +46,25 @@ class Validator(BaseValidatorNeuron):
         bt.logging.info("load_state()")
         self.load_state()
 
+    def build_signature_headers(self, signature, hotkey, timestamp, netuid) -> dict:
+        """
+        Build headers for validator requests.
+
+        Args:
+            signature (str): Signature of the request
+            hotkey (str): Hotkey of the validator
+            timestamp (float): Timestamp of the request
+            netuid (str): Netuid of the subnet
+        Returns:
+            dict: Headers for the request
+        """
+        return {
+            "X-Signature": signature,
+            "X-Hotkey": hotkey,
+            "X-Netuid": netuid,
+            "X-Timestamp": timestamp,
+        }
+
     async def forward(self):
         """
         Validator forward pass. Consists of:

@@ -1,18 +1,23 @@
+import json
 import os
 import datetime
 import re
 import time
 import requests
 from typing import List, Dict, Any
-
 import bittensor as bt
-
-from niome_subnet.genomics.model import ValidationContext, GenomicSimulationTask
-from niome_subnet.utils.constants import SUBMIT_URL, BASE_DELAY_SECONDS, MAX_SUBMIT_RETRIES, SUBMIT_REQUEST_TIMEOUT
+from niome_subnet.utils import upload_file_to_s3
+from niome_subnet.genomics.model import ValidationContext, GenomicSimulationTask, MinerScoreDto
+from niome_subnet.utils.constants import (
+    MINER_SCORE_URL,
+    BASE_DELAY_SECONDS,
+    MAX_SUBMIT_RETRIES,
+)
 
 def save_vcf(vcf_content, validation_context: ValidationContext, task: GenomicSimulationTask, file_name: str):
     """Utility to create a VCF file from a string content."""
     try:
+        bt.logging.debug(f"Task: {task}")
         # Create output directory if it doesn't exist
         os.makedirs('./vcf_files', exist_ok=True)
 
@@ -22,8 +27,8 @@ def save_vcf(vcf_content, validation_context: ValidationContext, task: GenomicSi
             if os.path.exists(output_path):
                 os.remove(output_path)
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")    
-        file_name = f"vcf_t{task.task_id}_{timestamp}_{validation_context.miner_hotkey}_m{validation_context.miner_uid}_{validation_context.validator_hotkey}_v{validation_context.validator_uid}.vcf"
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")    
+        file_name = f"vcf_t{task.get("id")}_{timestamp}_{validation_context.miner_hotkey}_m{validation_context.miner_uid}_{validation_context.validator_hotkey}_v{validation_context.validator_uid}.vcf"
         output_path = os.path.join("./vcf_files", file_name)
 
         with open(output_path, "w") as vcf_file:
@@ -31,7 +36,7 @@ def save_vcf(vcf_content, validation_context: ValidationContext, task: GenomicSi
         
         bt.logging.info(f"VCF saved: {file_name[:50]}...")  # Show first 50 chars
         bt.logging.info(f"Filename length: {len(file_name)} characters")
-        return output_path
+        return file_name
     except Exception as e:
          bt.logging.error(f"Error saving VCF file: {e}")
          raise ValueError(f"Error saving VCF filename '{file_name}': {e}")
@@ -81,7 +86,14 @@ def _parse_vcf_filename(file_name: str) -> tuple[str, str, int]:
     Returns (task_id, miner_hotkey, miner_uid) or raises ValueError.
     """
     base = os.path.basename(file_name)
-    pattern = r"^vcf_t(?P<task_id>[^_]+)_[^_]+_(?P<miner_hotkey>[^_]+)_m(?P<miner_uid>\\d+)_.*\\.vcf$"
+    # Match filename format:
+    # vcf_t{task_id}_{timestamp}_{miner_hotkey}_m{miner_uid}_{validator_hotkey}_v{validator_uid}.vcf
+    # - task_id: characters up to the first underscore (UUIDs with hyphens are allowed)
+    # - timestamp: ignored here
+    # - miner_hotkey: anything up to the literal `_m{miner_uid}` marker (allows underscores)
+    # - miner_uid: digits
+    # - validator_hotkey: anything up to `_v{validator_uid}`
+    pattern = r"^vcf_t(?P<task_id>[^_]+)_[^_]+_(?P<miner_hotkey>.+?)_m(?P<miner_uid>\d+)_(?P<validator_hotkey>.+?)_v(?P<validator_uid>\d+)\.vcf$"
     match = re.match(pattern, base)
     if not match:
         raise ValueError(f"Invalid VCF filename format: {file_name}")
@@ -133,6 +145,7 @@ def get_top3_vcf_files(top_rankings: List[Dict[str, Any]]) -> List[str]:
 
 
 def submit_validation_result(
+    self,
     scores: List[float],
     weights: List[float],
     top3_vcf_files: List[str],  # Only top 3 for file upload, but data from all VCFs
@@ -145,11 +158,9 @@ def submit_validation_result(
     - Use streaming file uploads to minimize memory usage.
     """
     try:
-        backend_url = f"{SUBMIT_URL}"
         # Pre-size lists for all possible miner_uids
-        data = []
-        files = []
         open_files = []
+        miner_scores = []
 
         # 1. Build data payload from all VCFs in ./vcf_files
         vcf_dir = "./vcf_files"
@@ -158,40 +169,61 @@ def submit_validation_result(
                 if not fname.endswith(".vcf"):
                     continue
                 vcf_path = os.path.join(vcf_dir, fname)
+
                 try:
                     task_id, miner_hotkey, miner_uid = _parse_vcf_filename(vcf_path)
                 except Exception as e:
                     bt.logging.warning(f"Invalid VCF filename {vcf_path}: {e}")
                     continue
-                data.append(("task_ids", task_id))
-                data.append(("miners", miner_hotkey))
-                data.append(("scores", str(scores[miner_uid])))
-                data.append(("weights", str(weights[miner_uid])))
-        
+
+                miner_score = MinerScoreDto(
+                    task_id=task_id,
+                    miner_hotkey=miner_hotkey,
+                    score=scores[miner_uid],
+                    weight=weights[miner_uid],
+                )
+                miner_scores.append(miner_score)
+
         # 2. Build files payload from top3_vcf_files only
         for vcf_path in top3_vcf_files:
-            if not os.path.exists(vcf_path):
-                bt.logging.warning(f"Missing top VCF: {vcf_path}")
-                continue
             try:
-                f = open(vcf_path, "rb")
-                open_files.append(f)
-                files.append(("files", (os.path.basename(vcf_path), f, "text/vcf")))
+                s3_path = upload_file_to_s3(self, vcf_path)
+                task_id, miner_hotkey, miner_uid = _parse_vcf_filename(vcf_path)
+                for ms in miner_scores:
+                    if ms.task_id == task_id and ms.miner_hotkey == miner_hotkey:
+                        ms.file_path = s3_path
+                        break
             except Exception as e:
-                bt.logging.error(f"Failed to open VCF file {vcf_path}: {e}")
-
-        if not files:
-            bt.logging.error("No top-3 VCFs attached")
-            _cleanup_vcf_directory()
-            return
+                bt.logging.error(f"Error uploading VCF file {vcf_path} to S3: {e}")
+                continue
 
         for attempt in range(1, MAX_SUBMIT_RETRIES + 1):
             try:
+                payload = {
+                    "miner_scores": [
+                        ms.to_dict()
+                        for ms in miner_scores
+                    ]
+                }
+                timestamp = str(time.time())
+                canonical = json.dumps({
+                    'payload': json.dumps(payload, separators=(',', ':'), sort_keys=True),
+                    'hotkey': self.wallet.hotkey.ss58_address,
+                    'netuid': str(self.netuid),
+                    'timestamp': timestamp,
+                }, separators=(',', ':'), sort_keys=True)
+
+                signature = self.wallet.hotkey.sign(canonical).hex()
+
                 response = requests.post(
-                    backend_url,
-                    data=data,
-                    files=files,
-                    timeout=SUBMIT_REQUEST_TIMEOUT,
+                    MINER_SCORE_URL,
+                    headers=self.build_signature_headers(
+                        signature=signature,
+                        hotkey=self.wallet.hotkey.ss58_address,
+                        timestamp=timestamp,
+                        netuid=str(self.netuid),
+                    ),
+                    json=payload
                 )
                 if response.status_code == 200:
                     bt.logging.info("Validation result submitted successfully")
