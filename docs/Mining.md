@@ -81,20 +81,12 @@ Once your hotkey is registered, you can start your Miner. The parameters you pas
    **Bash**
 
    ```
-    export PYTHONPATH = ~/niome_subnet
+    export PYTHONPATH = "$PYTHONPATH:~/niome_subnet"
    ```
 
-2. **Run the Miner Script:** The core command to launch a miner neuron requires specifying your wallet and hotkey names, the network, and the subnet ID (`--netuid xx`).
+2. **Run the Miner Script:** The core command to launch a miner neuron requires specifying your wallet and hotkey names, the network, and the subnet ID (`--netuid xx`, `testnet uid:289`).
    **Bash**
 
    ```
-   pm2 start neurons/miner.py \
-    --name niome-miner \
-    --interpreter python3 \
-    -- \
-    --netuid xx \
-    --subtensor.network testorfinney \
-    --wallet.name niome_wallet
-    --wallet.hotkey niome_miner
-    --logging.debug
+   pm2 start "python neurons/miner.py --netuid xx --subtensor.network testorfinney --wallet.name niome_wallet --wallet.hotkey niome_miner --logging.debug" --name niome-miner
    ```

@@ -81,20 +81,12 @@ Once your hotkey is registered, you can start your Validator. The parameters you
    **Bash**
 
    ```
-    export PYTHONPATH = ~/niome_subnet
+    export PYTHONPATH = "$PYTHONPATH:~/niome_subnet"
    ```
 
-2. **Run the Validator Script:** The core command to launch a validator neuron requires specifying your wallet and hotkey names, the network, and the subnet ID (`--netuid xx`).
+2. **Run the Validator Script:** The core command to launch a validator neuron requires specifying your wallet and hotkey names, the network, and the subnet ID (`--netuid xx`, `testnet uid: 289`).
    **Bash**
 
    ```
-   pm2 start neurons/validator.py \
-    --name niome-validator \
-    --interpreter python3 \
-    -- \
-    --netuid xx \
-    --subtensor.network testorfinney \
-    --wallet.name niome_wallet
-    --wallet.hotkey niome-validator
-    --logging.debug
+   pm2 start "python neurons/validator.py --netuid xx --subtensor.network testorfinney --wallet.name niome_wallet --wallet.hotkey niome_validator --logging.debug" --name niome-validator
    ```
