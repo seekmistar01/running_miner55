@@ -48,8 +48,8 @@ def get_miner_uids(self) -> np.ndarray:
         if epoch_length is None:
             epoch_length = getattr(self, "epoch_length", 0)
 
-        if (current_block - int(self.metagraph.last_update[uid])) <= epoch_length:
-            continue
+#        if (current_block - int(self.metagraph.last_update[uid])) <= epoch_length:
+#            continue
 
         uids.append(uid)
     
@@ -71,6 +71,7 @@ def get_random_uids(
     """
     # Avoid truth-testing numpy arrays (which raises an error when they contain
     # multiple elements). Treat None or empty sequence as missing.
+    bt.logging.debug(f"Getting {k} ranom uids from available uids: {available_uids}")
     if available_uids is None or (hasattr(available_uids, "__len__") and len(available_uids) == 0):
         available_uids = get_miner_uids(self)
 

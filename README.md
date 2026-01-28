@@ -37,6 +37,9 @@ Scalable Data Access: Synthetic datasets can be generated at arbitrary scale, en
 
 - **Resource Expansion:** We continuously add new enviromental challenges and data modalities to our subnet in order to evolve our subnet and solve a multitude of distinct problems.
 
+## Guide for Miners and Validators
+- [Miner Setup](docs/Mining.md) 
+- [Validator Setup](docs/Mining.md)
 
 ## Community
 For real-time discussions, community support, and regular updates, <a href="https://discord.com/invite/bittensor">join the bittensor discord</a>. Connect with developers, researchers, and users to get the most out of the NIOME Subnet.
