@@ -16,12 +16,12 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import time
 import aiohttp
 import asyncio
-import uuid
 import json
-from typing import List
+import time
+import uuid
+from typing import List, Optional
 
 import bittensor as bt
 import numpy as np
@@ -33,6 +33,7 @@ from niome_subnet.utils.uids import get_miner_uids, get_random_uids
 from niome_subnet.genomics.model import GenomicSimulationTask, ValidationContext, TaskPayload
 from niome_subnet.utils.constants import ( TASK_REQUEST_TIMEOUT, BASE_DELAY_SECONDS, MAX_TASK_RETRIES, GET_TASK_URL )
 
+sem = asyncio.Semaphore(config.MINER_QUERY_K)
 
 async def generate_task(self) -> GenomicSimulationTask | dict[str, str | int]:
     """Generate a synthetic genomic simulation task with retry logic and fallback."""
@@ -54,6 +55,7 @@ async def generate_task(self) -> GenomicSimulationTask | dict[str, str | int]:
 
     for attempt in range(1, MAX_TASK_RETRIES + 1):
         try:
+            bt.logging.debug(f'Signature: {signature} hotkey={self.wallet.hotkey.ss58_address} timestamp={timestamp} netuid={str(self.netuid)}')
             async with aiohttp.ClientSession() as client:
                 async with client.post(
                     GET_TASK_URL,
@@ -83,6 +85,25 @@ async def generate_task(self) -> GenomicSimulationTask | dict[str, str | int]:
                 bt.logging.error("All retries failed, returning fallback sample data")
                 raise e
 
+async def query_axon(self, axon, synapse) -> Optional[GenomicsTaskSynapse]:
+    """Query a single axon and return the response."""
+    try:
+        start_time = time.perf_counter()
+        response: GenomicsTaskSynapse = await self.dendrite.forward(
+            axons=axon, synapse=synapse, deserialize=False, timeout=config.FORWARD_TIMEOUT
+        )
+        if response is not None:
+            response.elapsed_time = time.perf_counter() - start_time
+            bt.logging.debug(f"Received response from axon {axon} in {response.elapsed_time:.2f}s")
+            return response
+    except Exception as e:
+        bt.logging.error(f"Error querying axon {axon}: {e}")
+        return None
+
+async def query_axon_limited(self, axon, synapse) -> Optional[GenomicsTaskSynapse]:
+    """Query an axon with a semaphore to limit concurrency."""
+    async with sem:
+        return await query_axon(self, axon, synapse)
 
 async def forward(self):
     """
@@ -119,12 +140,8 @@ async def forward(self):
         bt.logging.debug(f"Querying axons: {axons}")
 
         # The dendrite client queries the network.
-        responses: List[GenomicsTaskSynapse] = await self.dendrite(
-            axons=axons, synapse=synapse, deserialize=False, timeout=config.FORWARD_TIMEOUT
-        )
-
-        # Log the results for monitoring purposes.
-        bt.logging.info(f"Received responses: {responses}")
+        tasks = [asyncio.create_task(query_axon_limited(self, axon, synapse)) for axon in axons]
+        responses: List[Optional[GenomicsTaskSynapse]] = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Create Validation Context
         validation_contexts = [

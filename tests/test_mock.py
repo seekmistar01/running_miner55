@@ -60,11 +60,15 @@ def test_mock_dendrite_timings(timeout, min_time, max_time, n):
 
     async def run():
         task = {
-            "simulator": "stdpopsim",
             "population_model": "OutOfAfrica_4J17",
             "population": "CHB",
             "genome_model": "PyrhoCHB_GRCh38",
-            "chromosome": 10,
+            "chr_drugs": {
+                "chr10": {
+                    "drugs": ["dipyrone", "celecoxib", "phenprocoumon"],
+                    "gene": "CYP2C9"
+                }
+            },
             "output": "vcf",
         }
 

@@ -12,12 +12,12 @@ from niome_subnet.utils.constants import (
     MINER_SCORE_URL,
     BASE_DELAY_SECONDS,
     MAX_SUBMIT_RETRIES,
+    METADATA_SCORE_WEIGHT
 )
 
 def save_vcf(vcf_content, validation_context: ValidationContext, task: GenomicSimulationTask, file_name: str):
     """Utility to create a VCF file from a string content."""
     try:
-        bt.logging.debug(f"Task: {task}")
         # Create output directory if it doesn't exist
         os.makedirs('./vcf_files', exist_ok=True)
 
@@ -28,14 +28,13 @@ def save_vcf(vcf_content, validation_context: ValidationContext, task: GenomicSi
                 os.remove(output_path)
 
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")    
-        file_name = f"vcf_t{task.get("id")}_{timestamp}_{validation_context.miner_hotkey}_m{validation_context.miner_uid}_{validation_context.validator_hotkey}_v{validation_context.validator_uid}.vcf"
+        file_name = f"vcf_t{task.get('id')}_{timestamp}_{validation_context.miner_hotkey}_m{validation_context.miner_uid}_{validation_context.validator_hotkey}_v{validation_context.validator_uid}.vcf"
         output_path = os.path.join("./vcf_files", file_name)
 
         with open(output_path, "w") as vcf_file:
             vcf_file.write(vcf_content)
         
         bt.logging.info(f"VCF saved: {file_name[:50]}...")  # Show first 50 chars
-        bt.logging.info(f"Filename length: {len(file_name)} characters")
         return file_name
     except Exception as e:
          bt.logging.error(f"Error saving VCF file: {e}")
@@ -176,13 +175,14 @@ def submit_validation_result(
                     bt.logging.warning(f"Invalid VCF filename {vcf_path}: {e}")
                     continue
 
-                miner_score = MinerScoreDto(
-                    task_id=task_id,
-                    miner_hotkey=miner_hotkey,
-                    score=scores[miner_uid],
-                    weight=weights[miner_uid],
-                )
-                miner_scores.append(miner_score)
+                if scores[miner_uid] > METADATA_SCORE_WEIGHT:
+                    miner_score = MinerScoreDto(
+                        task_id=task_id,
+                        miner_hotkey=miner_hotkey,
+                        score=scores[miner_uid],
+                        weight=weights[miner_uid],
+                    )
+                    miner_scores.append(miner_score)
 
         # 2. Build files payload from top3_vcf_files only
         for vcf_path in top3_vcf_files:

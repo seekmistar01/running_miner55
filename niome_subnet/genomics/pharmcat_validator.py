@@ -15,16 +15,15 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import tempfile
-import os
-import subprocess
-import glob
-from typing import Dict, List, Optional, Any
-
 import bittensor as bt
+import shutil
+import tempfile
 import pharmcat_runner
-
-from niome_subnet.utils.constants import PHARMCAT_TIMEOUT
+import json
+from typing import Dict, List, Optional, Any, Tuple
+from pathlib import Path
+from niome_subnet.utils import run_cmd
+from niome_subnet.utils.constants import DOCKER_IMAGE, DOCKER_TIMEOUT, WITH_DOCKER
 
 class PharmCATValidator:
     """
@@ -34,85 +33,42 @@ class PharmCATValidator:
     1. Ground-truth retrieval using PharmCAT
     2. Adversarial QC with SNP swapping
     """
+
+    docker_use_sudo: bool = False  # Class variable to track if sudo is needed for Docker
     
     def __init__(self):
         """
-        Initialize PharmCAT validator using pharmcat-runner Python package.
-        
-        Uses Python directly to run PharmaCAT as specified in requirements.
+        Initialize PharmCAT validator
         """
-        # Initialize pharmcat-runner Python package
-        try:
-            # pharmcat_runner is a function-based package, no class initialization needed
-            # Verify pharmcat_runner is available
-            bt.logging.info("Initialized PharmCAT validator with pharmcat-runner Python package")
-        except ImportError:
-            bt.logging.warning(
-                "pharmcat-runner package not found. "
-                "Install with: pip install pharmcat-runner"
-            )
-            bt.logging.warning("PharmCAT validation will use fallback mode")
-        except Exception as e:
-            bt.logging.error(f"Failed to initialize pharmcat-runner: {e}")
-            bt.logging.warning("PharmCAT validation will use fallback mode")
+        if WITH_DOCKER:
+            try:
+                self._assert_docker_available()
+            except Exception as e:
+                bt.logging.warning(f"Failed to initialize pharmcat docker: {e}\nPharmCAT validation will use fallback mode")
     
-    def get_ground_truth(self, vcf_content: str) -> Dict[str, Any]:
-        """
-        Get ground truth from PharmCAT for a VCF file and combination.
-        
-        Args:
-            vcf_content: VCF file content as string
-            
-        Returns:
-            Dict containing PharmCAT results with match (alleles) and phenotype (clinical call)
-        """
-        try:
-            # Create temporary VCF file
-            with tempfile.NamedTemporaryFile(mode='w', suffix='', delete=False) as temp_vcf:
-                temp_vcf.write(vcf_content)
-                temp_vcf_path_unsorted = temp_vcf.name
+    def _assert_docker_available(self) -> None:
+        rc, out, err = run_cmd(["docker", "--version"], timeout=20)
+        if rc != 0:
+            raise RuntimeError(f"Docker not available: {err or out}")
 
-            bt.logging.debug(f"temp saved VCF file: {temp_vcf_path_unsorted}")
-
-            temp_vcf_path = f"{temp_vcf_path_unsorted}.sorted.vcf"
-
-            # Before you can run PharmCAT you need to sort the file using bcftools:
-            cmd = ["bcftools", "sort", temp_vcf_path_unsorted]
-
-            with open(temp_vcf_path, "w") as f:
-                result = subprocess.run(cmd, stdout=f, stderr=subprocess.PIPE, text=True, timeout=PHARMCAT_TIMEOUT)
-
-            if result.returncode != 0:
-                raise Exception(f"vcf sort failed: {result.stderr}")
-
-            if os.path.exists(temp_vcf_path):
-                bt.logging.debug(f"The file {temp_vcf_path} exists.")
-            else:
-                bt.logging.error(f"The file {temp_vcf_path} does not exist.")
-
-            # Clean up temporary file
-            if os.path.exists(temp_vcf_path_unsorted):
-                bt.logging.info(f"delete VCF file =: {temp_vcf_path_unsorted}")
-                os.unlink(temp_vcf_path_unsorted)
-
-            # Run PharmCAT
-            pharmcat_results = self._run_pharmcat(temp_vcf_path)
-
-            # Clean up temporary file
-            if os.path.exists(temp_vcf_path):
-                bt.logging.info(f"delete VCF file =: {temp_vcf_path}")
-                os.unlink(temp_vcf_path)
-
-            # Delete all temp files with the same prefix
-            pattern = temp_vcf_path + ".*"
-            for f in glob.glob(pattern):
-                if os.path.isfile(f):
-                    bt.logging.info(f"delete temp VCF files: {f}")
-                    os.unlink(f)
-            return pharmcat_results
-        except Exception as e:
-            bt.logging.error(f"Error running PharmCAT: {str(e)}")
-            return {"error": str(e), "match": {}, "phenotype": {}}
+        # also verify daemon connectivity
+        rc, out, err = run_cmd(["docker", "ps"], timeout=20)
+        if rc != 0:
+            # If permission denied to the docker socket, try a non-interactive sudo check
+            err_txt = (err or out or "").lower()
+            if "permission denied" in err_txt or "connect: permission denied" in err_txt:
+                # try non-interactive sudo; this will fail immediately if a password is required
+                rc_sudo, _, _ = run_cmd(["sudo", "-n", "docker", "ps"], timeout=20)
+                if rc_sudo == 0:
+                    self.docker_use_sudo = True
+                    return
+                # fallthrough: advise user how to fix permissions
+                raise RuntimeError(
+                    "Docker daemon socket permission denied. Either run this script with sudo, or add your user to the 'docker' group and re-login.\n"
+                    "To test without changing groups, try: 'sudo python3 main.py'\n"
+                    "Original error: " + (err or out or "")
+                )
+            raise RuntimeError(f"Docker daemon not reachable: {err or out}")
     
     def _run_pharmcat(self, vcf_path: str) -> Dict[str, Any]:
         """
@@ -126,12 +82,35 @@ class PharmCATValidator:
             - phenotype: JSON blob with clinical call
         """
         try:
-            return self._run_pharmcat_local(vcf_path)
+            if WITH_DOCKER:
+                return self._run_pharmcat_docker_pipeline(vcf_path)
+            else:
+                return self._run_pharmcat_local(vcf_path)
                 
         except Exception as e:
             bt.logging.error(f"Error running PharmCAT: {str(e)}")
             return {"error": str(e), "match": {}, "phenotype": {}}
     
+    def _run_pharmcat_docker_pipeline(
+        self,
+        vcf_path: str,
+        docker_image: str = DOCKER_IMAGE,
+        timeout: int = DOCKER_TIMEOUT,
+    ) -> Dict[str, Any]:
+        
+        self._assert_docker_available()
+
+        with tempfile.TemporaryDirectory() as out_dir:
+            self._run_pharmcat_with_fallbacks(
+                image=docker_image,
+                vcf_path=vcf_path,
+                out_dir=out_dir,
+                timeout=timeout,
+            )
+            result = self._parse_pharmcat_docker_outputs(out_dir)
+            shutil.rmtree(out_dir, ignore_errors=True)
+            return result
+
     def _run_pharmcat_local(self, vcf_path: str) -> Dict[str, Any]:
         """
         Run PharmCAT using Python pharmcat-runner package.
@@ -236,218 +215,168 @@ class PharmCATValidator:
                         continue
             
         except Exception as e:
-            bt.logging.warning(f"Error parsing PharmaCAT files: {e}")
+            bt.logging.error(f"Error parsing PharmaCAT files: {e}")
         
         return {
             "match": match_data,
             "phenotype": phenotype_data,
         }
     
-    def extract_gold_label(self, pharmcat_results: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Extract canonical phenotype/dose as gold label from PharmCAT results.
-        
-        Args:
-            pharmcat_results: PharmCAT analysis results
-            
-        Returns:
-            Dict containing canonical phenotype and dose recommendations
-        """
-        if "error" in pharmcat_results:
-            return {"error": pharmcat_results["error"], "phenotype": None, "dose": None}
-        
-        try:
-            phenotype_data = pharmcat_results.get("phenotype", {})
-            match_data = pharmcat_results.get("match", {})
-            
-            gold_label = {
-                "phenotype": phenotype_data.get("canonical_phenotype", "Unknown"),
-                "dose": phenotype_data.get("dose_recommendation", {}),
-                "key_alleles": match_data.get("key_alleles", []),
-                "confidence": phenotype_data.get("confidence", 0.0)
-            }
-            
-            bt.logging.info(f"Extracted gold label: {gold_label}")
-            return gold_label
-            
-        except Exception as e:
-            bt.logging.error(f"Error extracting gold label: {str(e)}")
-            return {"error": str(e), "phenotype": None, "dose": None}
-    
-    def create_adversarial_vcf(self, original_vcf: str, non_causal_snps: List[str]) -> str:
-        """
-        Create adversarial VCF by swapping non-causal SNPs.
-        
-        Args:
-            original_vcf: Original VCF content
-            non_causal_snps: List of non-causal SNP positions to swap
-            
-        Returns:
-            Modified VCF content with swapped SNPs
-        """
-        try:
-            lines = original_vcf.split('\n')
-            modified_lines = []
-            
-            for line in lines:
-                if line.startswith('#') or not line.strip():
-                    # Keep headers and empty lines unchanged
-                    modified_lines.append(line)
-                else:
-                    # Parse VCF data line
-                    fields = line.split('\t')
-                    if len(fields) >= 8:  # Basic VCF format check
-                        chrom, pos, id_field, ref, alt = fields[0], fields[1], fields[2], fields[3], fields[4]
-                        
-                        # Check if this position should be swapped
-                        if pos in non_causal_snps:
-                            # Swap reference and alternate alleles
-                            fields[3], fields[4] = fields[4], fields[3]
-                            bt.logging.info(f"Swapped alleles at position {pos}: {ref} <-> {alt}")
-                        
-                        modified_lines.append('\t'.join(fields))
-                    else:
-                        modified_lines.append(line)
-            
-            modified_vcf = '\n'.join(modified_lines)
-            bt.logging.info(f"Created adversarial VCF with {len(non_causal_snps)} swapped SNPs")
-            return modified_vcf
-            
-        except Exception as e:
-            bt.logging.error(f"Error creating adversarial VCF: {str(e)}")
-            return original_vcf
-    
-    def measure_drift(self, original_results: Dict[str, Any], adversarial_results: Dict[str, Any]) -> float:
-        """
-        Measure drift between original and adversarial results.
-        
-        Args:
-            original_results: Results from original VCF
-            adversarial_results: Results from adversarial VCF
-            
-        Returns:
-            Drift score (0.0 = no drift, 1.0 = maximum drift)
-        """
-        try:
-            if "error" in original_results or "error" in adversarial_results:
-                return 1.0  # Maximum penalty for errors
-            
-            # Compare phenotypes
-            orig_phenotype = original_results.get("phenotype", {}).get("canonical_phenotype", "")
-            adv_phenotype = adversarial_results.get("phenotype", {}).get("canonical_phenotype", "")
-            
-            # Compare key alleles
-            orig_alleles = set(original_results.get("match", {}).get("key_alleles", []))
-            adv_alleles = set(adversarial_results.get("match", {}).get("key_alleles", []))
-            
-            # Calculate phenotype drift
-            phenotype_drift = 0.0 if orig_phenotype == adv_phenotype else 1.0
-            
-            # Calculate allele drift (Jaccard distance)
-            if orig_alleles or adv_alleles:
-                intersection = len(orig_alleles & adv_alleles)
-                union = len(orig_alleles | adv_alleles)
-                allele_drift = 1.0 - (intersection / union) if union > 0 else 1.0
-            else:
-                allele_drift = 0.0
-            
-            # Combined drift score
-            drift_score = (phenotype_drift + allele_drift) / 2.0
-            
-            bt.logging.info(f"Drift measurement - Phenotype: {phenotype_drift}, Alleles: {allele_drift}, Combined: {drift_score}")
-            return drift_score
-            
-        except Exception as e:
-            bt.logging.error(f"Error measuring drift: {str(e)}")
-            return 1.0  # Maximum penalty for errors
-    
     def validate_miner_response(self, 
-                              vcf_content: str, 
-                              non_causal_snps: List[str] = None,
-                              pharmcat_results: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                              report_content: Dict[str, Any], 
+                              chr_drugs: dict[str, dict]) -> float:
         """
         Complete validation pipeline for a miner response.
         
         Args:
-            vcf_content: VCF content from miner
-            non_causal_snps: Optional list of non-causal SNPs for adversarial testing
+            result_content: pharmcat result content (dict)
             pharmcat_results: Optional pre-computed PharmaCAT results to avoid redundant computation
             
         Returns:
-            Dict containing comprehensive validation results
+            Validation score
         """
         try:
-            
-            # 1. Get ground truth from PharmCAT (use provided results if available)
-            if pharmcat_results is None:
-                pharmcat_results = self.get_ground_truth(vcf_content)
-            else:
-                bt.logging.debug(f"Using provided PharmaCAT results (avoiding redundant computation)")
-            gold_label = self.extract_gold_label(pharmcat_results)
-            
-            # 2. Adversarial QC (if non-causal SNPs provided)
-            adversarial_results = None
-            drift_score = 0.0
-            if non_causal_snps:
-                adversarial_vcf = self.create_adversarial_vcf(vcf_content, non_causal_snps)
-                adversarial_results = self.get_ground_truth(adversarial_vcf)
-                drift_score = self.measure_drift(pharmcat_results, adversarial_results)
-            
-            # 4. Calculate final validation score
-            validation_score = self._calculate_validation_score(
-                gold_label, drift_score,
-            )
-            
-            validation_results = {
-                "validation_score": validation_score,
-                "gold_label": gold_label,
-                "pharmcat_results": pharmcat_results,
-                "adversarial_results": adversarial_results,
-                "drift_score": drift_score,
-            }
-            
-            bt.logging.info(f"Validation completed - Score: {validation_score:.4f}")
-            return validation_results
+            score = 0
+
+            genes = report_content.get("genes", "")
+            if isinstance(genes, dict):
+                for chr in list(chr_drugs.keys()):
+                    sub_score = 0
+                    gene_drugs = chr_drugs[chr]
+                    gene = gene_drugs.get("gene", "")
+                    if gene in genes:
+                        sub_score += 0.1
+                        related_drugs = genes[gene].get("relatedDrugs", [])
+                        required_drugs = gene_drugs.get("drugs", [])
+                        for drug in required_drugs:
+                            for related_drug in related_drugs:
+                                if related_drug.get("name", "") == drug:
+                                    sub_score += 0.9 / len(required_drugs)
+                                    break
+                    score += sub_score / len(chr_drugs)
+
+            return score
             
         except Exception as e:
             bt.logging.error(f"Error in validation pipeline: {str(e)}")
-            return {
-                "error": str(e),
-                "validation_score": 0.0,
-                "gold_label": None,
-                "pharmcat_results": None,
-                "adversarial_results": None,
-                "drift_score": 1.0,
-                "chi_square_test": {"error": str(e), "p_value": 1.0}
-            }
+            return 0
     
-    def _calculate_validation_score(self, 
-                                   gold_label: Dict[str, Any], 
-                                   drift_score: float) -> float:
+    def _run_pharmcat_with_fallbacks(
+        self,
+        image: str,
+        vcf_path: str,
+        out_dir: str,
+        timeout: int,
+    ) -> Tuple[str, str]:
         """
-        Calculate final validation score based on all validation components.
+        Tries multiple command shapes until one works.
+        Returns (stdout, stderr) of the successful run.
+        Raises RuntimeError with detailed diagnostics if all fail.
+        """
+        vcf_path = str(Path(vcf_path).resolve())
+        out_dir_path = Path(out_dir).resolve()
+        out_dir_path.mkdir(parents=True, exist_ok=True)
+
+        container_out = "/out"
+
+        host_dir = str(Path(vcf_path).resolve().parent)
+        container_vcf = f"/data/{Path(vcf_path).name}"
+
+        base = [
+            "docker", "run", "--rm",
+            "-v", f"{host_dir}:/data",
+            "-v", f"{str(out_dir_path)}:{container_out}",
+            image,
+        ]
+
+        candidates: List[List[str]] = [
+            # Try the common CLI shapes. Order matters: prefer the executable
+            # observed to work in local testing (`pharmcat_pipeline`).
+            # Shell-wrapped forms often match the image entrypoint expectations
+            ["/bin/bash", "-lc", f"pharmcat_pipeline -reporterJson --output {container_out} {container_vcf}"],
+            ["/bin/bash", "-lc", f"pharmcat_pipeline -reporterJson -o {container_out} {container_vcf}"],
+            ["/bin/bash", "-lc", f"pharmcat_pipeline -reporterJson {container_vcf} -o {container_out}"],
+            ["pharmcat_pipeline", "-reporterJson", "--output", container_out, container_vcf],
+            ["pharmcat_pipeline", "-reporterJson", container_vcf, "--output", container_out],
+            ["pharmcat_pipeline", "-reporterJson", "-o", container_out, container_vcf],
+            ["pharmcat_pipeline", "-reporterJson", container_vcf, "-o", container_out],
+            # Most common: executable "pharmcat" with subcommand "pipeline"
+            ["pharmcat", "pipeline", "-reporterJson", "--vcf", container_vcf, "--out", container_out],
+            ["pharmcat", "pipeline", "-reporterJson", "--input", container_vcf, "--output", container_out],
+            # Some images may expose "pipeline" directly
+            ["pipeline", "-reporterJson", "--vcf", container_vcf, "--out", container_out],
+            ["pipeline", "-reporterJson", "--input", container_vcf, "--output", container_out],
+        ]
+
+        jar = self._find_pharmcat_jar(image, timeout=min(timeout, 120))
+        if jar:
+            # try invoking the jar with positional input and -o output
+            candidates.append(["java", "-jar", jar, "-o", container_out, container_vcf])
+            candidates.append(["java", "-jar", jar, "--output", container_out, container_vcf])
+            candidates.append(["java", "-jar", jar, container_vcf, "-o", container_out])
+            # shell-wrapped jar invocation
+            candidates.append(["/bin/bash", "-lc", f"java -jar {jar} -o {container_out} {container_vcf}"])
+
+        attempts: List[Dict[str, Any]] = []
+
+        for args in candidates:
+            cmd = base + args
+            rc, out, err = run_cmd(cmd, timeout=timeout)
+            attempts.append({"cmd": cmd, "rc": rc, "stderr_tail": (err or "")[-1200:], "stdout_tail": (out or "")[-800:]})
+            if rc == 0:
+                bt.logging.info(f"PharmCAT docker invocation succeeded: {' '.join(args[:3])} ...")
+                return out, err
+
+        # As a last diagnostic, show entrypoint/cmd
+        _, out_i, err_i = run_cmd(
+            ["docker", "inspect", image, "--format", "Entrypoint={{json .Config.Entrypoint}} Cmd={{json .Config.Cmd}}"],
+            timeout=30,
+        )
+        inspect_line = (out_i or err_i or "").strip()
+
+        msg = [
+            "Unable to run PharmCAT in the Docker image with known command patterns.",
+            f"Image: {image}",
+            f"docker inspect: {inspect_line}",
+            "",
+            "Tried the following docker run commands (showing rc and stderr tail):",
+        ]
+        for a in attempts:
+            msg.append(f"- rc={a['rc']} cmd={' '.join(a['cmd'])}")
+            if a["stderr_tail"]:
+                msg.append(f"  stderr: {a['stderr_tail']}")
+            if a.get("stdout_tail"):
+                msg.append(f"  stdout: {a['stdout_tail']}")
+        raise RuntimeError("\n".join(msg))
+    
+    def _parse_pharmcat_docker_outputs(self, output_dir: str) -> Dict[str, Any]:
+        outp = Path(output_dir)
+        json_files = list(outp.rglob("*.report.json"))
+
+        if len(json_files) == 0:
+            bt.logging.error(f"No JSON report found in PharmCAT output directory: {output_dir}")
+            return {}
         
-        Args:
-            gold_label: Gold label from PharmCAT
-            drift_score: Drift score from adversarial testing
-            chi_square_results: Chi-square test results
-            
-        Returns:
-            Final validation score (0.0 to 1.0)
-        """
-        try:
-            # Base score from gold label quality
-            base_score = 1.0 if gold_label.get("phenotype") and "error" not in gold_label else 0.0
-            
-            # Penalty for high drift (adversarial robustness)
-            drift_penalty = drift_score * 0.3  # 30% penalty for high drift
-            
-            # Calculate final score
-            final_score = max(0.0, base_score - drift_penalty)
-            
-            bt.logging.info(f"Validation score calculation: base={base_score}, drift_penalty={drift_penalty}, final={final_score}")
-            return final_score
-            
-        except Exception as e:
-            bt.logging.error(f"Error calculating validation score: {str(e)}")
-            return 0.0
+        report: Dict[str, Any] = json.loads(json_files[0].read_text())
+        if isinstance(report, dict):
+            return report
+        
+        return {}
+    
+    def _find_pharmcat_jar(self, image: str, timeout: int) -> Optional[str]:
+        # Look for a jar that smells like PharmCAT.
+        rc, out, err = self._docker_sh(
+            image,
+            r'find / -maxdepth 6 -type f \( -iname "*pharmcat*.jar" -o -iname "PharmCAT*.jar" \) 2>/dev/null | head -n 1',
+            timeout=timeout,
+        )
+        if rc == 0:
+            jar = (out or "").strip()
+            return jar or None
+        return None
+
+    def _docker_sh(self, image: str, sh_cmd: str, timeout: int) -> Tuple[int, str, str]:
+        return run_cmd(
+            ["docker", "run", "--rm", "--entrypoint", "sh", image, "-lc", sh_cmd],
+            timeout=timeout,
+        )

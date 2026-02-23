@@ -3,11 +3,10 @@ from typing import Generic, TypeVar
 
 class GenomicSimulationTask(BaseModel):
     id : str
-    simulator: str
     population_model: str
     population: str
     genome_model: str
-    chromosome: int
+    chr_drugs: dict[str, dict]
     output: str = "vcf"
 
 class GroundTruthLabel(BaseModel):

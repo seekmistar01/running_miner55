@@ -123,11 +123,10 @@ class Miner(BaseMinerNeuron):
 
         Args:
             task: JSON schema task dictionary with fields:
-                - simulator: simulation tool (e.g., "stdpopsim")
                 - population_model: population model name (e.g., OutOfAfrica_4J17)
                 - population: population identifier (CEU, YRI, etc.)
                 - genome-model: genome model identifier (e.g., PyrhoCEU_GRCh38)
-                - chromosome: chromosome specification (single: "1"-"22", "X", "chr1";
+                - chromosomes: chromosomes list
                   multiple: "1,2,3", ["1","2"]; range: "1-5", "chr1-chr5")
                 - output: output format ("vcf")
 
@@ -144,8 +143,9 @@ class Miner(BaseMinerNeuron):
             # Extract parameters from JSON schema task with defaults (matching validator defaults)
             population_model = task.get("population_model")
             population = task.get("population")
-            genome_model = task.get("genome-model")
-            chromosome = task.get("chromosome")
+            genome_model = task.get("genome_model")
+            chr_drugs = task.get("chr_drugs", {})
+            chromosomes = list(chr_drugs.keys())
 
             # Create temporary file for final output
             temp_vcf = tempfile.NamedTemporaryFile(suffix=".vcf", delete=False)
@@ -153,7 +153,7 @@ class Miner(BaseMinerNeuron):
 
             # Try stdpopsim simulation
             if self._simulate_genome(
-                temp_vcf.name, population_model, population, genome_model, chromosome
+                temp_vcf.name, population_model, population, genome_model, chromosomes
             ):
                 # Read VCF content from file with error handling
                 try:
@@ -191,14 +191,11 @@ class Miner(BaseMinerNeuron):
         population_model: str,
         population: str,
         genome_model: str,
-        chromosome: Any,
+        chromosomes: list[str],
     ) -> bool:
         """Run stdpopsim simulation."""
         try:
-
-            # Parse chromosome specification (supports single, multiple, ranges)
-            chrom_value = self._parse_chromosome_spec(chromosome)[0]
-            chromosome_chr = f"chr{chrom_value}"
+            chromosome_chr = chromosomes[0].replace("chr", "")  # stdpopsim expects chromosome names without "chr" prefix
 
             species_name = "HomSap"
 
@@ -312,11 +309,11 @@ class Miner(BaseMinerNeuron):
 
             try:
                 hotkey_address = self.wallet.hotkey.ss58_address
-                metadata_lines.append(f"##miner_hotkey={hotkey_address}\n")
+                metadata_lines.append(f"##miner_hotkey={hotkey_address}")
 
                 # Also add a hash of the hotkey for shorter identification
                 hotkey_hash = hashlib.sha256(hotkey_address.encode()).hexdigest()[:16]
-                metadata_lines.append(f"##miner_hotkey_hash={hotkey_hash}\n")
+                metadata_lines.append(f"##miner_hotkey_hash={hotkey_hash}")
             except Exception as hotkey_error:
                 bt.logging.warning(f"Could not get hotkey: {hotkey_error}")
 
@@ -324,14 +321,16 @@ class Miner(BaseMinerNeuron):
             if task:
                 if "population_model" in task:
                     metadata_lines.append(
-                        f"##population_model={task['population_model']}\n"
+                        f"##population_model={task['population_model']}"
                     )
                 if "population" in task:
-                    metadata_lines.append(f"##population={task['population']}\n")
-                if "genome-model" in task:
-                    metadata_lines.append(f"##genome_model={task['genome-model']}\n")
-                if "chromosome" in task:
-                    metadata_lines.append(f"##chromosome={task['chromosome']}\n")
+                    metadata_lines.append(f"##population={task['population']}")
+                if "genome_model" in task:
+                    metadata_lines.append(f"##genome_model={task['genome_model']}")
+                if "chr_drugs" in task:
+                    chr_drugs = task.get("chr_drugs", {})
+                    chromosomes = list(chr_drugs.keys())
+                    metadata_lines.append(f"##chromosomes={','.join(chromosomes)}")
 
             # Insert metadata lines into header
             header_lines[insert_index:insert_index] = metadata_lines
@@ -350,76 +349,6 @@ class Miner(BaseMinerNeuron):
         except Exception as metadata_error:
             bt.logging.warning(f"Could not add metadata to VCF: {metadata_error}")
             return vcf_content  # Return original content if metadata addition fails
-
-    def _parse_chromosome_spec(self, chromosome_spec: Any) -> List[str]:
-        """
-        Parse chromosome specification supporting single, multiple, and range formats.
-
-        Supports:
-        - Single: "1", "chr1", "X", 1
-        - Multiple: "1,2,3", ["1", "2", "3"], "chr1,chr2,chrX"
-        - Range: "1-5", "chr1-chr5", "1-22"
-        - Mixed: "1-3,5,X" or "chr1-chr3,chr5,chrX"
-
-        Args:
-            chromosome_spec: Chromosome specification (int, str, or list)
-
-        Returns:
-            List of normalized chromosome strings (without "chr" prefix)
-        """
-        valid_chroms = [str(i) for i in range(1, 23)] + ["X", "Y", "MT", "M"]
-        chromosomes = []
-
-        # Handle list input
-        if isinstance(chromosome_spec, list):
-            for chrom in chromosome_spec:
-                chromosomes.extend(self._parse_chromosome_spec(chrom))
-            return chromosomes
-
-        # Convert to string and normalize
-        chrom_str = str(chromosome_spec).strip()
-        if not chrom_str:
-            return []
-
-        # Remove "chr" prefix for processing
-        chrom_str = chrom_str.replace("chr", "")
-
-        # Check for comma-separated values (multiple chromosomes)
-        if "," in chrom_str:
-            parts = [p.strip() for p in chrom_str.split(",")]
-            for part in parts:
-                chromosomes.extend(self._parse_chromosome_spec(part))
-            return chromosomes
-
-        # Check for range (e.g., "1-5" or "chr1-chr5")
-        if "-" in chrom_str:
-            parts = chrom_str.split("-", 1)
-            if len(parts) != 2:
-                return []
-
-            start_str = parts[0].strip()
-            end_str = parts[1].strip()
-
-            # Try to parse as numeric range
-            try:
-                start = int(start_str)
-                end = int(end_str)
-
-                # Validate range
-                if start < 1 or end > 22 or start > end:
-                    return []
-
-                # Generate range
-                return [str(i) for i in range(start, end + 1)]
-            except ValueError:
-                # Not a numeric range, treat as invalid
-                return []
-
-        # Single chromosome - validate and return
-        if chrom_str in valid_chroms:
-            return [chrom_str]
-
-        return []
 
     async def blacklist(self, synapse: GenomicsTaskSynapse) -> Tuple[bool, str]:
         """

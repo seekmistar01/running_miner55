@@ -1,13 +1,46 @@
-from typing import List, Dict, Any
-
 import bittensor as bt
-
-from niome_subnet.utils.constants import MIN_VCF_SIZE, VCF_FILEFORMAT_PREFIX, VCF_CHROM_PREFIX
+import gzip
+import tempfile
+from typing import List, Dict, Any
+from pathlib import Path
+from niome_subnet.utils import run_cmd
+from niome_subnet.utils.constants import DOCKER_IMAGE, MIN_VCF_SIZE, VCF_FILEFORMAT_PREFIX, VCF_CHROM_PREFIX, VCF_PREPROCESSED_MIN_LINES, WITH_DOCKER
 
 def is_vcf_valid(miner_vcf: str) -> bool:
-    # Validate miner vcf
-    validation_result = {"valid": False, "errors": [], "warnings": []}
     try:
+        # Validate miner vcf
+        if WITH_DOCKER:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                lines = miner_vcf.splitlines()
+                cleaned = lines[:1] + lines[7:]
+                vcf_content = "\n".join(cleaned)
+                temp_vcf = Path(tmpdir) / "temp.vcf"
+                temp_vcf.write_text(vcf_content)
+
+                # run the PharmCAT VCF preprocessor against the temporary file
+                run_cmd(
+                    [
+                        "docker",
+                        "run",
+                        "--rm",
+                        "-v",
+                        f"{tmpdir}:/pharmcat/data",
+                        DOCKER_IMAGE,
+                        "pharmcat_vcf_preprocessor",
+                        "-vcf",
+                        "/pharmcat/data/temp.vcf",
+                    ],
+                    timeout=60,
+                )
+
+                with gzip.open(Path(f"{tmpdir}/temp.preprocessed.vcf.bgz"), "rt", encoding="utf-8", errors="replace") as f:
+                    preprocessed_content = f.read()
+                    lines = preprocessed_content.splitlines()
+                    if len(lines) < VCF_PREPROCESSED_MIN_LINES:
+                        bt.logging.warning("The given vcf has no valid chromosome info.")
+                        return False
+
+        validation_result = {"valid": False, "errors": [], "warnings": []}
         validation_result = _has_minimum_size(miner_vcf, validation_result)
         lines = miner_vcf.splitlines()
 
@@ -34,7 +67,6 @@ def is_vcf_valid(miner_vcf: str) -> bool:
             bt.logging.warning(f"VCF validation failed: {validation_result.get('errors', [])}")
             return False
         return True
-
     except Exception as e:
         bt.logging.error(f"Error during VCF validation: {e}")
         return False

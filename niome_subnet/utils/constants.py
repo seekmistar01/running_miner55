@@ -1,9 +1,10 @@
 # ---- General Constants -----
 
 TESTNET_UID = 289
-MAINNET_UID = 0                                 # Bittensor subnet uid => shoulde be changed
+MAINNET_UID = 55                                # Bittensor subnet uid => shoulde be changed
 
-FORWARD_TIMEOUT = 60                      # Might be optimized further
+FORWARD_TIMEOUT = 180                           # Might be optimized further
+RESPONSE_TIMEOUT = 60                           # Might be optimized further
 MINER_QUERY_K = 5                               # Might be optimized further
 
 GENOMIC_TASK_URL = ""                           # <=== Task gerneration, may be https://genomic.io
@@ -30,12 +31,15 @@ SCORE_DISTRIBUTION = {
 }
 
 # ---- Genomic Constants -----
+DOCKER_IMAGE = "pgkb/pharmcat"
+DOCKER_TIMEOUT = 600  # seconds
 
 MIN_VCF_SIZE = 100 # Minimum VCF content size in characters
 
 METADATA_VALIDATION_THRESHOLD = 0.8 # Minimum metadata validation score to be considered valid (80%)
-PHARMCAT_SCORE_WEIGHT = 0.8 # Weight for PharmaCAT validation score (80%)
-METADATA_SCORE_WEIGHT = 0.2 # Weight for metadata validation score (20%)
+PHARMCAT_SCORE_WEIGHT = 0.6 # Weight for PharmaCAT validation score (60%)
+METADATA_SCORE_WEIGHT = 0.1 # Weight for metadata validation score (10%)
+ELAPSED_TIME_WEIGHT = 0.3 # Weight for elapsed time in final score (30%)
 
 NON_CAUSAL_SNP_CHECK_LIMIT = 10  # Number of variants to check for non-causal SNPs
 MAX_NON_CAUSAL_SNPS = 5 # Maximum number of non-causal SNPs to return
@@ -46,9 +50,9 @@ VCF_METADATA_KEYS = {
     "population_model": "population_model",
     "population": "population",
     "genome_model": "genome_model",
-    "chromosome": "chromosome",
-    "miner_hotkey": "miner_hotkey",
+    "chr_drugs": "chromosomes",
 }
+VCF_PREPROCESSED_MIN_LINES = 36  # Minimum number of lines expected in preprocessed VCF to consider it valid
 
 PHENOTYPES = [
     "Poor Metabolizer",
@@ -92,3 +96,5 @@ MAX_SUBMIT_RETRIES = 3
 CHUNK_SIZE = 5 * 1024 * 1024  # 5 MB
 MAX_CONCURRENT_UPLOADS = 5
 MAX_CHUNK_UPLOAD_RETRIES = 3
+
+WITH_DOCKER = True

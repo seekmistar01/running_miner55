@@ -1,3 +1,4 @@
+import ast
 from typing import Dict, Any
 
 import bittensor as bt
@@ -70,8 +71,8 @@ def _extract_vcf_metadata(miner_vcf: str) -> Dict[str, Any]:
                         metadata["population"] = value
                     elif key == "genome_model":
                         metadata["genome_model"] = value
-                    elif key == "chromosome":
-                        metadata["chromosome"] = value
+                    elif key == "chromosomes":
+                        metadata["chromosomes"] = value
 
     except Exception as e:
         bt.logging.warning(f"Error extracting VCF metadata: {e}")
@@ -123,10 +124,9 @@ def _compare_task_metadata(
 
 def _metadata_match(key: str, expected: str, actual: str) -> bool:
     """Special comparison rules depending on metadata key."""
-
-    # Normalize chromosome (e.g., "chr1", "CHR1", "1")
-    if key == "chromosome":
-        e = expected.lower().replace("chr", "")
+    if key == "chr_drugs":
+        d = ast.literal_eval(expected)
+        e = ",".join(d.keys()).lower().replace("chr", "")
         a = actual.lower().replace("chr", "")
         return e == a
 

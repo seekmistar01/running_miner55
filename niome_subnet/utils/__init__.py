@@ -2,7 +2,9 @@ import os
 import time
 import json
 import requests
+import subprocess
 import bittensor as bt
+from typing import List, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from .constants import CHUNK_SIZE, S3_UPLOAD_URL, MAX_CONCURRENT_UPLOADS, MAX_CHUNK_UPLOAD_RETRIES
 
@@ -150,3 +152,8 @@ def upload_file_to_s3(self, file_path: str) -> str:
         )
 
     return s3_key
+
+def run_cmd(cmd: List[str], timeout: int) -> Tuple[int, str, str]:
+    cmd_to_run = list(cmd)
+    p = subprocess.run(cmd_to_run, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
+    return p.returncode, p.stdout, p.stderr

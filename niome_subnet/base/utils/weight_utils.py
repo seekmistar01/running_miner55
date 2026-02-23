@@ -1,14 +1,13 @@
-import math
-from typing import Dict, Tuple, List, Union, Any
-
-import numpy as np
 import bittensor as bt
-
+import math
+import numpy as np
+from typing import Dict, Tuple, List, Union, Any
 from niome_subnet.utils.constants import (
     SCORE_DISTRIBUTION,
     TOP_MIN_ALPHA,
     TOP_MIN_ALPHA_SCALE,
     TOP_MINER_COUNT,
+    METADATA_SCORE_WEIGHT
 )
 
 U32_MAX = 4294967295
@@ -303,14 +302,15 @@ def calculate_rankings(mg: Dict[str, Any], scores: List[float]) -> List[Dict[str
     # Create rankings with rank information
     rankings = []
     for rank, (uid, score) in enumerate(sorted_pairs, 1):
-        rankings.append(
-            {
-                "uid": int(uid),
-                "score": float(score),
-                "rank": rank,
-                "hotkey": (mg.hotkeys[uid] if uid < len(mg.hotkeys) else "unknown"),
-            }
-        )
+        if score > METADATA_SCORE_WEIGHT:
+            rankings.append(
+                {
+                    "uid": int(uid),
+                    "score": float(score),
+                    "rank": rank,
+                    "hotkey": (mg.hotkeys[uid] if uid < len(mg.hotkeys) else "unknown"),
+                }
+            )
 
     bt.logging.info(f"Calculated rankings: {rankings}")
     return rankings
