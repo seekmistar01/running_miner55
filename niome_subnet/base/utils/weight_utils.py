@@ -302,7 +302,7 @@ def calculate_rankings(mg: Dict[str, Any], scores: List[float]) -> List[Dict[str
     # Create rankings with rank information
     rankings = []
     for rank, (uid, score) in enumerate(sorted_pairs, 1):
-        if score > METADATA_SCORE_WEIGHT:
+        if score > (METADATA_SCORE_WEIGHT + 0.1):
             rankings.append(
                 {
                     "uid": int(uid),

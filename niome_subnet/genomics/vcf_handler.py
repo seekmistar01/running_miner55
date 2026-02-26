@@ -175,7 +175,7 @@ def submit_validation_result(
                     bt.logging.warning(f"Invalid VCF filename {vcf_path}: {e}")
                     continue
 
-                if scores[miner_uid] > METADATA_SCORE_WEIGHT:
+                if scores[miner_uid] > (METADATA_SCORE_WEIGHT + 0.1):
                     miner_score = MinerScoreDto(
                         task_id=task_id,
                         miner_hotkey=miner_hotkey,
