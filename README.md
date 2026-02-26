@@ -1,6 +1,6 @@
-# NIOME : Synthetic Genomics Subnet
+# NIOME : Bittensor Subnet(SN55) for Privacy-Safe Genomic Inteligence
 
-WeWelcome to the NIOME Subnet! This repository contains all the necessary information to get started, understand our subnet architecture, and contribute.
+Welcome to the NIOME Subnet! This repository contains all the necessary information to get started, understand our subnet architecture, and contribute.
 
 ![niome logo image](docs/logo.png)
 
@@ -17,6 +17,11 @@ Recent advances in machine learning have enabled the generation of high-fidelity
 
 The NIOME subnet incentivizes the development of novel and robust AI architectures for synthetic genomic data generation and validation. Through the continuous evolution of this subnet, miners are progressively challenged with increasingly complex genomic simulations, enabling higher biological realism, stronger statistical guarantees, and broader applicability across precision medicine and biomedical research.
 
+**System Flow**
+1. **Task Generation (Backend → Validators)** The NIOME backend continuously produces genomic simulation tasks. These tasks represent environmental conditions, population parameters, or biological constraints that miners must use to generate synthetic genomic profiles. Validators fetch these tasks directly from the backend. 
+2. **Task Distribution (Validators → Miners)** After receiving a task, validators broadcast it to miners on the subnet. Each miner receives the same challenge, ensuring fair and comparable evaluation across participants. 
+3. **Synthetic Genome Generation (Miners → Validators)** Miners process the task using their generative models and produce a synthetic genome file. This output must reflect realistic allele frequencies, linkage disequilibrium patterns, and pharmacogenomic variants while preserving privacy. Miners then return their generated genome profile to the validator that issued the task. 
+4. **Evaluation and Scoring (Validators → Backend)** Validators evaluate miner submissions using held‑out datasets, statistical fidelity checks, and biological plausibility metrics. Based on performance, validators assign scores that determine miner emissions.
 
 **Features:**
 
@@ -34,15 +39,15 @@ Scalable Data Access: Synthetic datasets can be generated at arbitrary scale, en
 
    Biological Realism: Miner outputs must capture population-level allele frequencies, linkage patterns, and gene–drug response variability observed in real-world datasets.
 
-- **Research Integration:** We systematically update our detection models and methodologies in response to emerging academic research. Through the global ERA5 dataset, we are able to provide validators and miners with near infinite amounts of environmental data, which can also be used for training their models. All data is publicly available to everyone.
+- **Research Integration:** We systematically update our detection models and methodologies in response to emerging academic research. 
 
 - **Validators:** Responsible for challenging miners with a subsets of environmental data and evaluating miner performance on heldout data.
 
 - **Resource Expansion:** We continuously add new enviromental challenges and data modalities to our subnet in order to evolve our subnet and solve a multitude of distinct problems.
 
 ## Guide for Miners and Validators
-- [Miner Setup](docs/Mining.md) 
-- [Validator Setup](docs/Mining.md)
+- [Miner Setup](docs/miner_guide.md) 
+- [Validator Setup](docs/validator_guide.md)
 
 ## Community
 For real-time discussions, community support, and regular updates, <a href="https://discord.com/invite/bittensor">join the bittensor discord</a>. Connect with developers, researchers, and users to get the most out of the NIOME Subnet.

@@ -32,7 +32,7 @@ SCORE_DISTRIBUTION = {
 
 # ---- Genomic Constants -----
 DOCKER_IMAGE = "pgkb/pharmcat"
-DOCKER_TIMEOUT = 600  # seconds
+DOCKER_TIMEOUT = 300  # seconds
 
 MIN_VCF_SIZE = 100 # Minimum VCF content size in characters
 
@@ -77,7 +77,7 @@ PHARMACOGENE_REGIONS = {
 DRUGS = ["warfarin", "clopidogrel", "simvastatin", "metoprolol", "tamoxifen"]
 
 # ---- Backend Request -----
-BASE_URL = "http://212.7.204.107:5000"
+BASE_URL = "http://niome.genomes.io"
 MINER_SCORE_URL = f"{BASE_URL}/api/miner_scores"
 GET_TASK_URL = f"{BASE_URL}/api/tasks"
 S3_UPLOAD_URL = f"{BASE_URL}/api/s3"
