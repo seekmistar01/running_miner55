@@ -237,26 +237,34 @@ class PharmCATValidator:
         """
         try:
             score = 0
-
             genes = report_content.get("genes", "")
+            
             if isinstance(genes, dict):
+                gene_drugs: dict[str, list[str]] = {}
                 for chr in list(chr_drugs.keys()):
-                    sub_score = 0
                     gene_drugs = chr_drugs[chr]
                     gene = gene_drugs.get("gene", "")
-                    if gene in genes:
-                        sub_score += 0.1
-                        related_drugs = genes[gene].get("relatedDrugs", [])
-                        required_drugs = gene_drugs.get("drugs", [])
-                        for drug in required_drugs:
-                            for related_drug in related_drugs:
-                                if related_drug.get("name", "") == drug:
-                                    sub_score += 0.9 / len(required_drugs)
-                                    break
-                    score += sub_score / len(chr_drugs)
+                    gene_drugs[gene] = chr_drugs[chr]["drugs"]
+                
+                for gene in genes:
+                    if gene_drugs.get(gene) is None:
+                        score -= 1
+                        continue
 
-            return score
-            
+                    related_drugs = genes[gene].get("relatedDrugs", [])
+                    required_drugs = gene_drugs[gene]
+                    sub_score = 0
+                    if len(related_drugs) != len(required_drugs):
+                        score -= 1
+                    else:
+                        for drug in related_drugs:
+                            if drug in required_drugs:
+                                sub_score += 1
+                            else:
+                                sub_score -= 1
+                        score += max(0, sub_score) / len(required_drugs)
+
+            return max(0, score) / len(gene_drugs)
         except Exception as e:
             bt.logging.error(f"Error in validation pipeline: {str(e)}")
             return 0
