@@ -165,14 +165,14 @@ def add_miner_args(cls, parser):
     parser.add_argument(
         "--wandb.project_name",
         type=str,
-        default="template-miners",
+        default="",
         help="Wandb project to log to.",
     )
 
     parser.add_argument(
         "--wandb.entity",
         type=str,
-        default="sillarcode-ellipsis-health",
+        default="",
         help="Wandb entity to log to.",
     )
 
