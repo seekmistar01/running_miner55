@@ -407,8 +407,6 @@ class BaseValidatorNeuron(BaseNeuron):
 
     def save_state(self):
         """Saves the state of the validator to a file."""
-        bt.logging.info("Saving validator state.")
-
         # # Save the state of the validator to file.
         # np.savez(
         #     self.config.neuron.full_path + "/state.npz",

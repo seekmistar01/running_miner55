@@ -21,6 +21,7 @@ import asyncio
 import json
 import time
 import uuid
+import wandb
 from typing import List, Optional
 
 import bittensor as bt
@@ -55,7 +56,6 @@ async def generate_task(self) -> GenomicSimulationTask | dict[str, str | int]:
 
     for attempt in range(1, MAX_TASK_RETRIES + 1):
         try:
-            bt.logging.debug(f'Signature: {signature} hotkey={self.wallet.hotkey.ss58_address} timestamp={timestamp} netuid={str(self.netuid)}')
             async with aiohttp.ClientSession() as client:
                 async with client.post(
                     GET_TASK_URL,
@@ -73,7 +73,6 @@ async def generate_task(self) -> GenomicSimulationTask | dict[str, str | int]:
                             f"Backend returned status {response.status}"
                         )
                     data = await response.json()
-                    bt.logging.info("Task successfully fetched from backend")
                     return data
         except Exception as e:
             bt.logging.error(f"Error on generating task (attempt {attempt}): {e}")
@@ -94,7 +93,6 @@ async def query_axon(self, axon, synapse) -> Optional[GenomicsTaskSynapse]:
         )
         if response is not None:
             response.elapsed_time = time.perf_counter() - start_time
-            bt.logging.debug(f"Received response from axon {axon} in {response.elapsed_time:.2f}s")
             return response
     except Exception as e:
         bt.logging.error(f"Error querying axon {axon}: {e}")
@@ -128,8 +126,6 @@ async def forward(self):
             ~np.isin(self.remain_miner_uids, miner_uids)
         ]
 
-        bt.logging.info(f"Remaining miner uids: {self.remain_miner_uids}")
-
         task = await generate_task(self)
 
         bt.logging.info(f"Sending task to miners: {task}")
@@ -137,7 +133,6 @@ async def forward(self):
         synapse = GenomicsTaskSynapse(task=task, timeout=config.FORWARD_TIMEOUT)
 
         axons = [self.metagraph.axons[uid] for uid in miner_uids]
-        bt.logging.debug(f"Querying axons: {axons}")
 
         # The dendrite client queries the network.
         tasks = [asyncio.create_task(query_axon_limited(self, axon, synapse)) for axon in axons]
@@ -161,7 +156,24 @@ async def forward(self):
 
         # Update the scores.
         await self.update_scores(rewards, miner_uids)
+
+        do_wandb_logging(self, task, miner_uids, rewards)
     except Exception as e:
         bt.logging.error(f"Error during forward step: {e}")
 
     time.sleep(5)
+
+
+def do_wandb_logging(self, task, miner_uids, rewards):
+    if self.config.wandb.off:
+        return
+
+    for uid, reward in zip(miner_uids, rewards):
+        miner_hotkey = self.metagraph.hotkeys[uid]
+        wandb.log({
+            "miner_uid": uid,
+            "miner_hotkey": miner_hotkey,
+            "task": task,
+            "reward": reward,
+            "step": self.step,
+        })

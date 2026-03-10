@@ -36,7 +36,6 @@ def upload_file_to_s3(self, file_path: str) -> str:
         json=payload
     ).json()
 
-    bt.logging.debug(f"Upload initiation response: {resp}")
     upload_id = resp['upload_id']
     s3_key = resp['s3_key']
     presigned_urls = resp['presigned_urls']
@@ -69,14 +68,12 @@ def upload_file_to_s3(self, file_path: str) -> str:
         while attempt < MAX_CHUNK_UPLOAD_RETRIES:
             try:
                 resp = requests.put(url, data=chunk_bytes, timeout=60)
-                bt.logging.debug(f"Chunk upload response headers (part {pn}): {resp.headers}")
                 # ETag may be in different cases
                 etag = resp.headers.get('ETag') or resp.headers.get('etag') or resp.headers.get('Etag')
                 if etag:
                     # preserve quotes as S3 returns them; CompleteMultipartUpload expects quoted ETags
                     return {'ETag': etag, 'PartNumber': pn}
                 else:
-                    bt.logging.warning(f"No ETag in response for part {pn}, status {resp.status_code}, body: {resp.text}")
                     # If success but no ETag, still accept 200/201
                     if resp.status_code in (200, 201):
                         return {'ETag': '', 'PartNumber': pn}

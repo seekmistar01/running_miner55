@@ -37,12 +37,7 @@ def calculate_score(query: int, response: GenomicsTaskSynapse, task: GenomicSimu
     try:
         vcf_content = response.vcf_content
 
-        if vcf_content is None:
-            bt.logging.error("No VCF content in miner response.")
-            return 0.0, ""
-
-        if not is_vcf_valid(vcf_content):
-            bt.logging.error("Invalid VCF content in miner response.")
+        if vcf_content is None or not is_vcf_valid(vcf_content):
             return 0.0, ""
         
         metadata_score = compute_metadata_score(vcf_content, task)
