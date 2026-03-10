@@ -55,7 +55,6 @@ def _cleanup_vcf_directory(open_files: List[Any] = []):
                 bt.logging.error(f"Error closing file: {e}")
 
     if not os.path.exists(vcf_dir):
-        bt.logging.debug("VCF directory does not exist, nothing to clean")
         return
 
     deleted = 0
@@ -73,8 +72,6 @@ def _cleanup_vcf_directory(open_files: List[Any] = []):
         except Exception as e:
             errors += 1
             bt.logging.error(f"Failed to delete VCF file {filename}: {e}")
-
-    bt.logging.info(f"VCF cleanup finished — deleted={deleted}, errors={errors}")
 
 
 def _parse_vcf_filename(file_name: str) -> tuple[str, str, int]:
@@ -136,9 +133,6 @@ def get_top3_vcf_files(top_rankings: List[Dict[str, Any]]) -> List[str]:
 
         if vcf_file:
             top_vcf_files.append(vcf_file)
-            bt.logging.info(f"Found VCF for top miner UID {uid}: {vcf_file}")
-        else:
-            bt.logging.warning(f"No VCF file found for top miner UID {uid}")
 
     return top_vcf_files
 

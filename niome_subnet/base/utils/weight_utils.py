@@ -123,7 +123,6 @@ def convert_weights_and_uids_for_emit(
         if uint16_val != 0:  # Filter zeros
             weight_vals.append(uint16_val)
             weight_uids.append(uid_i)
-    bt.logging.debug(f"final params: {weight_uids} : {weight_vals}")
     return weight_uids, weight_vals
 
 

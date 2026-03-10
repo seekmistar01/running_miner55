@@ -21,6 +21,7 @@ import subprocess
 import argparse
 import bittensor as bt
 from .logging import setup_events_logger
+from niome_subnet.utils.constants import TESTNET_UID
 
 
 def is_cuda_available():
@@ -54,7 +55,6 @@ def check_config(cls, config: "bt.Config"):
             config.neuron.name,
         )
     )
-    print("full path:", full_path)
     config.neuron.full_path = os.path.expanduser(full_path)
     if not os.path.exists(config.neuron.full_path):
         os.makedirs(config.neuron.full_path, exist_ok=True)
@@ -72,7 +72,7 @@ def add_args(cls, parser):
     Adds relevant arguments to the parser for operation.
     """
 
-    parser.add_argument("--netuid", type=int, help="Subnet netuid", default=1)
+    parser.add_argument("--netuid", type=int, help="Subnet netuid", default=TESTNET_UID)
 
     parser.add_argument(
         "--neuron.device",
@@ -130,6 +130,13 @@ def add_args(cls, parser):
         default="",
     )
 
+    parser.add_argument(
+        "--wandb.api_key",
+        type=str,
+        help="API key for wandb.",
+        default="",
+    )
+
 
 def add_miner_args(cls, parser):
     """Add miner specific arguments to the parser."""
@@ -165,7 +172,7 @@ def add_miner_args(cls, parser):
     parser.add_argument(
         "--wandb.entity",
         type=str,
-        default="opentensor-dev",
+        default="sillarcode-ellipsis-health",
         help="Wandb entity to log to.",
     )
 
@@ -233,10 +240,17 @@ def add_validator_args(cls, parser):
     )
 
     parser.add_argument(
+        "--wandb.testnet_project_name",
+        type=str,
+        help="The name of the project where you are sending the new run for testnet.",
+        default="niome-testnet",
+    )
+
+    parser.add_argument(
         "--wandb.entity",
         type=str,
         help="The name of the project where you are sending the new run.",
-        default="genome-ai",
+        default="genomes",
     )
 
 
