@@ -93,7 +93,8 @@ Once your hotkey is registered, you can start your Validator.
    --subtensor.network finney \
    --wallet.name your_coldkey \
    --wallet.hotkey your_hotkey \
-   --wandb.api_key your_api_key
+   --wandb.api_key your_api_key \ 
+   --logging.debug
    ```
 
 3. **Keep it Running:** Use a process manager like **`pm2`** or **`tmux`** to ensure your validator stays online. Validators must remain responsive to score miners and participate in consensus; downtime reduces emissions
