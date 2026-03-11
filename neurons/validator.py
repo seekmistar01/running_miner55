@@ -104,7 +104,7 @@ class Validator(BaseValidatorNeuron):
             f"Initializing W&B run for '{self.config.wandb.entity}/{wandb_project}'"
         )
         try:
-            wandb.login(key=self.config.wandb.api_key)
+            wandb.login(key=self.config.wandb.api_key, relogin=True)
             run_id = wandb.init(
                 name=run_name,
                 project=wandb_project,

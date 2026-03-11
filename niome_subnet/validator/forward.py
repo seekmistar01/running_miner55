@@ -156,24 +156,7 @@ async def forward(self):
 
         # Update the scores.
         await self.update_scores(rewards, miner_uids)
-
-        do_wandb_logging(self, task, miner_uids, rewards)
     except Exception as e:
         bt.logging.error(f"Error during forward step: {e}")
 
     time.sleep(5)
-
-
-def do_wandb_logging(self, task, miner_uids, rewards):
-    if self.config.wandb.off:
-        return
-
-    for uid, reward in zip(miner_uids, rewards):
-        miner_hotkey = self.metagraph.hotkeys[uid]
-        wandb.log({
-            "miner_uid": uid,
-            "miner_hotkey": miner_hotkey,
-            "task": task,
-            "reward": reward,
-            "step": self.step,
-        })
