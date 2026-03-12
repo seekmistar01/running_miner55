@@ -248,7 +248,6 @@ class PharmCATValidator:
                 
                 for gene in genes:
                     if gene_drugs.get(gene) is None:
-                        score -= 1
                         continue
 
                     related_drugs = genes[gene].get("relatedDrugs", [])
@@ -258,7 +257,8 @@ class PharmCATValidator:
                         score -= 1
                     else:
                         for drug in related_drugs:
-                            if drug in required_drugs:
+                            drug_name = drug["name"] if isinstance(drug, dict) else drug
+                            if drug_name in required_drugs:
                                 sub_score += 1
                             else:
                                 sub_score -= 1
