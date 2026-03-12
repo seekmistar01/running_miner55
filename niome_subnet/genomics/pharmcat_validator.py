@@ -242,9 +242,9 @@ class PharmCATValidator:
             if isinstance(genes, dict):
                 gene_drugs: dict[str, list[str]] = {}
                 for chr in list(chr_drugs.keys()):
-                    gene_drugs = chr_drugs[chr]
-                    gene = gene_drugs.get("gene", "")
-                    gene_drugs[gene] = chr_drugs[chr]["drugs"]
+                    chr_info = chr_drugs[chr]
+                    gene = chr_info.get("gene", "")
+                    gene_drugs[gene] = chr_info.get("drugs", [])
                 
                 for gene in genes:
                     if gene_drugs.get(gene) is None:
@@ -332,7 +332,6 @@ class PharmCATValidator:
             rc, out, err = run_cmd(cmd, timeout=timeout)
             attempts.append({"cmd": cmd, "rc": rc, "stderr_tail": (err or "")[-1200:], "stdout_tail": (out or "")[-800:]})
             if rc == 0:
-                bt.logging.info(f"PharmCAT docker invocation succeeded: {' '.join(args[:3])} ...")
                 return out, err
 
         # As a last diagnostic, show entrypoint/cmd
