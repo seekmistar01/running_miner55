@@ -37,7 +37,6 @@ def is_vcf_valid(miner_vcf: str) -> bool:
                     preprocessed_content = f.read()
                     lines = preprocessed_content.splitlines()
                     if len(lines) < VCF_PREPROCESSED_MIN_LINES:
-                        bt.logging.warning("The given vcf has no valid chromosome info.")
                         return False
 
         validation_result = {"valid": False, "errors": [], "warnings": []}

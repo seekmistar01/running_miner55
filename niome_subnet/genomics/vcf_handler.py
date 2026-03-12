@@ -34,7 +34,6 @@ def save_vcf(vcf_content, validation_context: ValidationContext, task: GenomicSi
         with open(output_path, "w") as vcf_file:
             vcf_file.write(vcf_content)
         
-        bt.logging.info(f"VCF saved: {file_name[:50]}...")  # Show first 50 chars
         return file_name
     except Exception as e:
          bt.logging.error(f"Error saving VCF file: {e}")
