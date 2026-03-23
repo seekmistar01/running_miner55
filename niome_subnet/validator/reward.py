@@ -26,7 +26,7 @@ from niome_subnet.genomics.pharmcat_scoring import compute_pharmcat_score
 from niome_subnet.genomics.vcf_handler import save_vcf
 from niome_subnet.utils.constants import PHARMCAT_SCORE_WEIGHT, METADATA_SCORE_WEIGHT, ELAPSED_TIME_WEIGHT, RESPONSE_TIMEOUT
 
-def calculate_score(query: int, response: GenomicsTaskSynapse, task: GenomicSimulationTask, validation_context : ValidationContext, file_name: str) -> tuple[float, str]:
+def calculate_score(response: GenomicsTaskSynapse, task: GenomicSimulationTask, validation_context : ValidationContext, file_name: str) -> tuple[float, str]:
     """
     Reward the miner response to the request. This method returns a reward
     value for the miner, which is used to update the miner"s score.
@@ -67,7 +67,6 @@ def compute_elapsed_time_score(elapsed_time: float, vcf_score: float) -> float:
 
 def get_rewards(
     self,
-    query: int,
     responses: List[Optional[GenomicsTaskSynapse]],
     task: GenomicSimulationTask,
     validation_contexts : List[ValidationContext],
@@ -86,7 +85,7 @@ def get_rewards(
     # Return a Python list of (score, filename) tuples so callers can unzip via zip(*rewards).
     return [
         calculate_score(
-            query, response, task, validation_context, self.file_names[validation_context.miner_uid]
+            response, task, validation_context, self.file_names[validation_context.miner_uid]
         ) if response is not None else (0.0, "")
         for response, validation_context in zip(responses, validation_contexts)
     ]

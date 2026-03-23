@@ -4,18 +4,15 @@ import tempfile
 from typing import List, Dict, Any
 from pathlib import Path
 from niome_subnet.utils import run_cmd
-from niome_subnet.utils.constants import DOCKER_IMAGE, MIN_VCF_SIZE, VCF_FILEFORMAT_PREFIX, VCF_CHROM_PREFIX, VCF_PREPROCESSED_MIN_LINES, WITH_DOCKER
+from niome_subnet.utils.constants import DOCKER_IMAGE, MIN_VCF_SIZE, VCF_FILEFORMAT_PREFIX, VCF_CHROM_PREFIX, WITH_DOCKER
 
 def is_vcf_valid(miner_vcf: str) -> bool:
     try:
         # Validate miner vcf
         if WITH_DOCKER:
             with tempfile.TemporaryDirectory() as tmpdir:
-                lines = miner_vcf.splitlines()
-                cleaned = lines[:1] + lines[7:]
-                vcf_content = "\n".join(cleaned)
                 temp_vcf = Path(tmpdir) / "temp.vcf"
-                temp_vcf.write_text(vcf_content)
+                temp_vcf.write_text(miner_vcf)
 
                 # run the PharmCAT VCF preprocessor against the temporary file
                 run_cmd(
@@ -35,13 +32,10 @@ def is_vcf_valid(miner_vcf: str) -> bool:
 
                 with gzip.open(Path(f"{tmpdir}/temp.preprocessed.vcf.bgz"), "rt", encoding="utf-8", errors="replace") as f:
                     preprocessed_content = f.read()
-                    lines = preprocessed_content.splitlines()
-                    if len(lines) < VCF_PREPROCESSED_MIN_LINES:
-                        return False
 
         validation_result = {"valid": False, "errors": [], "warnings": []}
-        validation_result = _has_minimum_size(miner_vcf, validation_result)
-        lines = miner_vcf.splitlines()
+        validation_result = _has_minimum_size(preprocessed_content, validation_result)
+        lines = preprocessed_content.splitlines()
 
         has_fileformat = _validate_fileformat_header(lines, validation_result)
         has_chrom_header = _validate_chrom_header(lines, validation_result)
@@ -54,6 +48,7 @@ def is_vcf_valid(miner_vcf: str) -> bool:
 
         _validate_data_lines(data_lines, validation_result)
         _validate_header_count(header_lines, validation_result)
+
         # Determine if valid
         validation_result["valid"] = (
             has_fileformat

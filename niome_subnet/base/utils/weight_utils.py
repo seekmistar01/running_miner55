@@ -80,16 +80,6 @@ def convert_weights_and_uids_for_emit(
     uids = np.asarray(uids)
     weights = np.asarray(weights)
 
-    # Get non-zero weights and corresponding uids
-    non_zero_weights = weights[weights > 0]
-    non_zero_weight_uids = uids[weights > 0]
-
-    # Debugging information
-    bt.logging.debug(f"weights: {weights}")
-    bt.logging.debug(f"non_zero_weights: {non_zero_weights}")
-    bt.logging.debug(f"uids: {uids}")
-    bt.logging.debug(f"non_zero_weight_uids: {non_zero_weight_uids}")
-
     if np.min(weights) < 0:
         raise ValueError(
             "Passed weight is negative cannot exist on chain {}".format(weights)
@@ -110,7 +100,6 @@ def convert_weights_and_uids_for_emit(
         weights = [
             float(value) / max_weight for value in weights
         ]  # max-upscale values (max_weight = 1).
-        bt.logging.debug(f"setting on chain max: {max_weight} and weights: {weights}")
 
     weight_vals = []
     weight_uids = []
@@ -130,6 +119,7 @@ def process_weights_for_netuid(
     uids,
     weights: np.ndarray,
     netuid: int,
+    owner_uid: int,
     subtensor: "bt.Subtensor",
     metagraph: "bt.metagraph" = None,
     exclude_quantile: int = 0,
@@ -147,12 +137,6 @@ def process_weights_for_netuid(
     tuple[np.ndarray[Any, np.dtype[Any]], np.ndarray],
     tuple[Any, np.ndarray],
 ]:
-    bt.logging.debug("process_weights_for_netuid()")
-    bt.logging.debug("weights", weights)
-    bt.logging.debug("netuid", netuid)
-    bt.logging.debug("subtensor", subtensor)
-    bt.logging.debug("metagraph", metagraph)
-
     # Get latest metagraph from chain if metagraph is None.
     if metagraph is None:
         metagraph = subtensor.metagraph(netuid)
@@ -161,37 +145,57 @@ def process_weights_for_netuid(
     if not isinstance(weights, np.ndarray) or weights.dtype != np.float32:
         weights = weights.astype(np.float32)
 
-    # Network configuration parameters from an subtensor.
-    # These parameters determine the range of acceptable weights for each neuron.
+    # Network configuration parameters from subtensor.
     quantile = exclude_quantile / U16_MAX
     min_allowed_weights = subtensor.min_allowed_weights(netuid=netuid)
     max_weight_limit = subtensor.max_weight_limit(netuid=netuid)
-    bt.logging.debug("quantile", quantile)
-    bt.logging.debug("min_allowed_weights", min_allowed_weights)
-    bt.logging.debug("max_weight_limit", max_weight_limit)
 
-    # Find all non zero weights.
+    # Find all non-zero weights.
     non_zero_weight_idx = np.argwhere(weights > 0).squeeze()
     non_zero_weight_idx = np.atleast_1d(non_zero_weight_idx)
     non_zero_weight_uids = uids[non_zero_weight_idx]
     non_zero_weights = weights[non_zero_weight_idx]
-    if non_zero_weights.size == 0 or metagraph.n < min_allowed_weights:
-        bt.logging.warning("No non-zero weights returning all ones.")
+
+    if non_zero_weights.size == 0:
+        # Create a weight array of zeros for all miners
+        all_weights = np.zeros(metagraph.n, dtype=np.float32)
+        # Find the index of owner_uid in the uids array
+        owner_indices = np.where(uids == owner_uid)[0]
+        if len(owner_indices) == 0:
+            bt.logging.error(
+                f"owner_uid {owner_uid} not found in uids. "
+                "Falling back to uniform distribution."
+            )
+            final_weights = np.ones(metagraph.n) / metagraph.n
+            return np.arange(len(final_weights)), final_weights
+        owner_idx = owner_indices[0]
+        # Give raw weight 1.0 to the owner (will be normalized to max_weight_limit)
+        all_weights[owner_idx] = 1.0
+        # Normalize to respect max_weight_limit
+        normalized_weights = normalize_max_weight(x=all_weights, limit=max_weight_limit)
+        # Find which UIDs now have non-zero weights (should be only owner_uid)
+        final_non_zero = np.where(normalized_weights > 0)[0]
+        final_uids = uids[final_non_zero]
+        final_weights = normalized_weights[final_non_zero]
+        return final_uids, final_weights
+
+    if metagraph.n < min_allowed_weights:
+        bt.logging.warning(
+            "Metagraph size smaller than min_allowed_weights, returning all ones."
+        )
         final_weights = np.ones(metagraph.n) / metagraph.n
-        bt.logging.debug("final_weights", final_weights)
         return np.arange(len(final_weights)), final_weights
 
-    elif non_zero_weights.size < min_allowed_weights:
+    if non_zero_weights.size < min_allowed_weights:
         bt.logging.warning(
-            "No non-zero weights less then min allowed weight, returning all ones."
+            "Number of non-zero weights less than min_allowed_weights, "
+            "creating minimal weights for all."
         )
-        weights = np.ones(metagraph.n) * 1e-5  # creating minimum even non-zero weights
+        weights = np.ones(metagraph.n) * 1e-5
         weights[non_zero_weight_idx] += non_zero_weights
         bt.logging.debug("final_weights", weights)
         normalized_weights = normalize_max_weight(x=weights, limit=max_weight_limit)
         return np.arange(len(normalized_weights)), normalized_weights
-
-    bt.logging.debug("non_zero_weights", non_zero_weights)
 
     # Compute the exclude quantile and find the weights in the lowest quantile
     max_exclude = max(0, len(non_zero_weights) - min_allowed_weights) / len(
@@ -199,15 +203,10 @@ def process_weights_for_netuid(
     )
     exclude_quantile = min([quantile, max_exclude])
     lowest_quantile = np.quantile(non_zero_weights, exclude_quantile)
-    bt.logging.debug("max_exclude", max_exclude)
-    bt.logging.debug("exclude_quantile", exclude_quantile)
-    bt.logging.debug("lowest_quantile", lowest_quantile)
 
     # Exclude all weights below the allowed quantile.
     non_zero_weight_uids = non_zero_weight_uids[lowest_quantile <= non_zero_weights]
     non_zero_weights = non_zero_weights[lowest_quantile <= non_zero_weights]
-    bt.logging.debug("non_zero_weight_uids", non_zero_weight_uids)
-    bt.logging.debug("non_zero_weights", non_zero_weights)
 
     # Normalize weights and return.
     normalized_weights = normalize_max_weight(
@@ -279,7 +278,7 @@ def process_scores(scores: np.ndarray) -> np.ndarray:
     return weights
 
 
-def calculate_rankings(mg: Dict[str, Any], scores: List[float]) -> List[Dict[str, Any]]:
+def calculate_rankings(mg: Dict[str, Any], scores: List[float], owner_uid: int) -> List[Dict[str, Any]]:
     """
     Calculate rankings based on scores.
 
@@ -301,7 +300,7 @@ def calculate_rankings(mg: Dict[str, Any], scores: List[float]) -> List[Dict[str
     # Create rankings with rank information
     rankings = []
     for rank, (uid, score) in enumerate(sorted_pairs, 1):
-        if score > (METADATA_SCORE_WEIGHT + 0.1):
+        if score > (METADATA_SCORE_WEIGHT + 0.1) and uid != owner_uid:
             rankings.append(
                 {
                     "uid": int(uid),
@@ -311,5 +310,4 @@ def calculate_rankings(mg: Dict[str, Any], scores: List[float]) -> List[Dict[str
                 }
             )
 
-    bt.logging.info(f"Calculated rankings: {rankings}")
     return rankings
