@@ -38,7 +38,7 @@ from niome_subnet.base.utils.weight_utils import (
 from niome_subnet.genomics.vcf_handler import get_top3_vcf_files, submit_validation_result
 from niome_subnet.mock import MockDendrite
 from niome_subnet.utils.config import add_validator_args
-from niome_subnet.utils.constants import SCORE_EMA_ALPHA
+from niome_subnet.utils.constants import BURNING_RATE, OWNER_HOTKEY, SCORE_EMA_ALPHA
 
 
 class BaseValidatorNeuron(BaseNeuron):
@@ -233,7 +233,9 @@ class BaseValidatorNeuron(BaseNeuron):
 
     def set_weights(self):
         """
-        Sets the validator weights to the metagraph hotkeys based on the scores it has received from the miners. The weights determine the trust and incentive level the validator assigns to miner nodes on the network.
+        Sets the validator weights on-chain.
+        Miners receive total weight * (1 - BURNING_RATE)
+        OWNER_HOTKEY receives the remaining BURNING_RATE
         """
 
         # Check if self.scores contains any NaN values and log a warning if it does.
@@ -242,58 +244,64 @@ class BaseValidatorNeuron(BaseNeuron):
                 "Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
             )
 
+        owner_uid = self.metagraph.hotkeys.index(OWNER_HOTKEY)
+
         # Calculate the average reward for each uid across non-zero values.
         # Replace any NaN values with 0.
         # Compute the norm of the scores
         scores = np.nan_to_num(self.scores)
         original_scores = np.nan_to_num(self.scores).tolist()
         processed_scores = process_scores(scores)
-        norm = np.linalg.norm(processed_scores, ord=1, axis=0, keepdims=True)
 
-        # Check if the norm is zero or contains NaN values
-        if np.any(norm == 0) or np.isnan(norm).any():
-            norm = np.ones_like(norm)  # Avoid division by zero or NaN
-
-        # Compute raw_weights safely
+        norm = np.sum(np.abs(processed_scores)) or 1.0
         raw_weights = processed_scores / norm
 
-        bt.logging.debug("raw_weights", raw_weights)
-        bt.logging.debug("raw_weight_uids", str(self.metagraph.uids.tolist()))
-        # Process the raw weights to final_weights via subtensor limitations.
-        (
-            processed_weight_uids,
-            processed_weights,
-        ) = process_weights_for_netuid(
+        processed_weight_uids, processed_weights = process_weights_for_netuid(
             uids=self.metagraph.uids,
             weights=raw_weights,
             netuid=self.config.netuid,
+            owner_uid=owner_uid,
             subtensor=self.subtensor,
             metagraph=self.metagraph,
         )
-        bt.logging.debug("processed_weights", processed_weights)
-        bt.logging.debug("processed_weight_uids", processed_weight_uids)
 
-        # Convert to uint16 weights and uids.
-        (
-            uint_uids,
-            uint_weights,
-        ) = convert_weights_and_uids_for_emit(
-            uids=processed_weight_uids, weights=processed_weights
-        )
-        bt.logging.debug("uint_weights", uint_weights)
-        bt.logging.debug("uint_uids", uint_uids)
+        full_miner_weights = np.zeros(self.metagraph.n, dtype=np.float32)
+        if len(processed_weight_uids) > 0:
+            full_miner_weights[np.asarray(processed_weight_uids)] = processed_weights
 
-        # Select Top 3 .vcf files
-        rankings = calculate_rankings(self.metagraph, raw_weights)
+        full_sum = np.sum(full_miner_weights)
+        if full_sum > 0:
+            full_miner_weights /= full_sum
+
+        final_weights = full_miner_weights * (1 - BURNING_RATE)
+
+        if 0 <= owner_uid < self.metagraph.n:
+            final_weights[owner_uid] += BURNING_RATE
+        else:
+            bt.logging.warning(f"OWNER_UID {owner_uid} out of range!")
+
+        final_norm = np.sum(final_weights) or 1.0
+        final_weights /= final_norm
+
+        bt.logging.info(f"Weights: {final_weights}")
+
+        rankings = calculate_rankings(self.metagraph, full_miner_weights, owner_uid)
         top_vcf_files = get_top3_vcf_files(rankings[:3])
+
         submit_validation_result(
             self,
             scores=original_scores,
-            weights=raw_weights.tolist(),
+            weights=final_weights.tolist(),
             top3_vcf_files=top_vcf_files,
         )
 
-        # Set the weights on chain via our subtensor connection.
+        final_uids = np.where(final_weights > 1e-8)[0].tolist()
+        final_weight_values = final_weights[final_uids].tolist()
+
+        uint_uids, uint_weights = convert_weights_and_uids_for_emit(
+            uids=final_uids, weights=final_weight_values
+        )
+
         result, msg = self.subtensor.set_weights(
             wallet=self.wallet,
             netuid=self.config.netuid,
@@ -303,15 +311,13 @@ class BaseValidatorNeuron(BaseNeuron):
             wait_for_inclusion=False,
             version_key=self.spec_version,
         )
-        if result is True:
+        if result:
             bt.logging.info("set_weights on chain successfully!")
         else:
             bt.logging.error("set_weights failed", msg)
 
     def resync_metagraph(self):
         """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""
-        bt.logging.info("resync_metagraph()")
-
         # Copies state of metagraph before syncing.
         previous_metagraph = copy.deepcopy(self.metagraph)
 
@@ -322,24 +328,20 @@ class BaseValidatorNeuron(BaseNeuron):
         if previous_metagraph.axons == self.metagraph.axons:
             return
 
-        bt.logging.info(
-            "Metagraph updated, re-syncing hotkeys, dendrite pool and moving averages"
-        )
-        # Zero out all hotkeys that have been replaced.
         for uid, hotkey in enumerate(self.hotkeys):
-            if hotkey != self.metagraph.hotkeys[uid]:
-                self.scores[uid] = 0  # hotkey has been replaced
+            if uid < len(self.metagraph.hotkeys) and hotkey != self.metagraph.hotkeys[uid]:
+                self.scores[uid] = 0
+                self.file_names[uid] = ""
 
-        # Check to see if the metagraph has changed size.
-        # If so, we need to add new hotkeys and moving averages.
-        if len(self.hotkeys) < len(self.metagraph.hotkeys):
-            # Update the size of the moving average scores.
-            new_moving_average = np.zeros((self.metagraph.n))
-            min_len = min(len(self.hotkeys), len(self.scores))
-            new_moving_average[:min_len] = self.scores[:min_len]
-            self.scores = new_moving_average
+        if len(self.scores) != self.metagraph.n:
+            new_scores = np.zeros(self.metagraph.n, dtype=np.float32)
+            new_file_names = np.array([""] * int(self.metagraph.n), dtype=object)
+            min_len = min(len(self.scores), self.metagraph.n)
+            new_scores[:min_len] = self.scores[:min_len]
+            new_file_names[:min_len] = self.file_names[:min_len]
+            self.scores = new_scores
+            self.file_names = new_file_names
 
-        # Update the hotkeys.
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
 
     async def update_scores(self, rewards: np.ndarray, uids: List[int]):
@@ -397,13 +399,12 @@ class BaseValidatorNeuron(BaseNeuron):
             # shape: [ metagraph.n ]
             scattered_rewards = np.zeros_like(self.scores)
             scattered_rewards[uids_array] = reward_scores
-            bt.logging.debug(f"Scattered rewards: {reward_scores}")
+
             # Update scores with rewards produced by this step.
             # shape: [ metagraph.n ]
             self.scores = (
                 SCORE_EMA_ALPHA * scattered_rewards + (1 - SCORE_EMA_ALPHA) * self.scores
             )
-            bt.logging.debug(f"Updated moving avg scores: {self.scores}")
 
     def save_state(self):
         """Saves the state of the validator to a file."""
