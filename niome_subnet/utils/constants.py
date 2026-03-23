@@ -41,9 +41,6 @@ PHARMCAT_SCORE_WEIGHT = 0.6 # Weight for PharmaCAT validation score (60%)
 METADATA_SCORE_WEIGHT = 0.1 # Weight for metadata validation score (10%)
 ELAPSED_TIME_WEIGHT = 0.3 # Weight for elapsed time in final score (30%)
 
-NON_CAUSAL_SNP_CHECK_LIMIT = 10  # Number of variants to check for non-causal SNPs
-MAX_NON_CAUSAL_SNPS = 5 # Maximum number of non-causal SNPs to return
-
 VCF_FILEFORMAT_PREFIX = "##fileformat="
 VCF_CHROM_PREFIX = "#CHROM"
 VCF_METADATA_KEYS = {
@@ -69,12 +66,6 @@ ALLELES = [
     "*2/*3",
     "*3/*3",
 ]
-PHARMACOGENE_REGIONS = {
-    "chr10": range(96610921, 96724143),  # CYP2C9
-    "chr22": range(42522500, 42523270),  # CYP2D6
-}
-
-DRUGS = ["warfarin", "clopidogrel", "simvastatin", "metoprolol", "tamoxifen"]
 
 # ---- Backend Request -----
 BASE_URL = "https://niome-api.genomes.io"
@@ -100,3 +91,6 @@ MAX_CHUNK_UPLOAD_RETRIES = 3
 WITH_DOCKER = True
 
 WANDB_MAX_LOGS = 95_000
+
+BURNING_RATE = 1.0
+OWNER_HOTKEY = "5DJ5fT174AY8GzbYHnamYQCJd4cTcj2Zf7ogUvBhry1KfYVd"

@@ -18,16 +18,13 @@
 
 import aiohttp
 import asyncio
+import bittensor as bt
 import json
+import numpy as np
+import niome_subnet.utils.constants as config
 import time
 import uuid
-import wandb
 from typing import List, Optional
-
-import bittensor as bt
-import numpy as np
-
-import niome_subnet.utils.constants as config
 from niome_subnet.protocol import GenomicsTaskSynapse
 from niome_subnet.validator.reward import get_rewards
 from niome_subnet.utils.uids import get_miner_uids, get_random_uids
@@ -150,7 +147,7 @@ async def forward(self):
         ]
 
         # Adjust the scores based on responses from miners.
-        rewards = get_rewards(self, query=self.step, responses=responses, task=task, validation_contexts=validation_contexts)
+        rewards = get_rewards(self, responses=responses, task=task, validation_contexts=validation_contexts)
 
         bt.logging.info(f"Scored responses: {rewards}")
 

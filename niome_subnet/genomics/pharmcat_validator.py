@@ -247,22 +247,14 @@ class PharmCATValidator:
                     gene_drugs[gene] = chr_info.get("drugs", [])
                 
                 for gene in genes:
-                    if gene_drugs.get(gene) is None:
+                    gene_info = genes.get(gene)
+                    if gene_info.get("phased", "false") == "false":
+                        continue
+                    elif gene not in list(gene_drugs.keys()):
+                        score -= 1
                         continue
 
-                    related_drugs = genes[gene].get("relatedDrugs", [])
-                    required_drugs = gene_drugs[gene]
-                    sub_score = 0
-                    if len(related_drugs) != len(required_drugs):
-                        score -= 1
-                    else:
-                        for drug in related_drugs:
-                            drug_name = drug["name"] if isinstance(drug, dict) else drug
-                            if drug_name in required_drugs:
-                                sub_score += 1
-                            else:
-                                sub_score -= 1
-                        score += max(0, sub_score) / len(required_drugs)
+                    score += 1
 
             return max(0, score) / len(gene_drugs)
         except Exception as e:
