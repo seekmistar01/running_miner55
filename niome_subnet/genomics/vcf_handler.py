@@ -88,7 +88,7 @@ def _parse_vcf_filename(file_name: str) -> tuple[str, str, int]:
     # - miner_hotkey: anything up to the literal `_m{miner_uid}` marker (allows underscores)
     # - miner_uid: digits
     # - validator_hotkey: anything up to `_v{validator_uid}`
-    pattern = r"^vcf_t(?P<task_id>[^_]+)_(?P<timestamp>[^_]+)_(?P<miner_hotkey>[^_]+)_m(?P<miner_uid>\d+)_(?P<validator_hotkey>[^_]+)_v(?P<validator_uid>\d+)\.vcf$"
+    pattern = r"^vcf_t(?P<task_id>[^_]+)_(?P<timestamp>[^_]+_[^_]+)_(?P<miner_hotkey>.+?)_m(?P<miner_uid>\d+)_(?P<validator_hotkey>.+?)_v(?P<validator_uid>\d+)\.vcf$"
     match = re.match(pattern, base)
     if not match:
         raise ValueError(f"Invalid VCF filename format: {file_name}")
