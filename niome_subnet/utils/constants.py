@@ -17,18 +17,7 @@ SCORE_EMA_ALPHA = 0.8
 TOP_MINER_COUNT = 10
 TOP_MIN_ALPHA_SCALE = 50
 TOP_MIN_ALPHA = 0.7
-SCORE_DISTRIBUTION = {
-    1: 0.60,   # 60%
-    2: 0.15,   # 15%
-    3: 0.065,   # 6.5%
-    4: 0.05,   # 5%
-    5: 0.04,   # 4%
-    6: 0.025,  # 2.5%
-    7: 0.02,   # 2%
-    8: 0.02,  # 2%
-    9: 0.015,   # 1.5%
-    10: 0.015   # 1.5%
-}
+SCORE_DISTRIBUTION = [0.6, 0.15, 0.065, 0.05, 0.04, 0.025, 0.02, 0.02, 0.015, 0.015]
 
 # ---- Genomic Constants -----
 DOCKER_IMAGE = "pgkb/pharmcat"
@@ -43,12 +32,7 @@ ELAPSED_TIME_WEIGHT = 0.3 # Weight for elapsed time in final score (30%)
 
 VCF_FILEFORMAT_PREFIX = "##fileformat="
 VCF_CHROM_PREFIX = "#CHROM"
-VCF_METADATA_KEYS = {
-    "population_model": "population_model",
-    "population": "population",
-    "genome_model": "genome_model",
-    "chr_drugs": "chromosomes",
-}
+VCF_METADATA_KEYS = ["population_model", "population", "genome_model", "gene_drugs"]
 VCF_PREPROCESSED_MIN_LINES = 36  # Minimum number of lines expected in preprocessed VCF to consider it valid
 
 PHENOTYPES = [
@@ -90,7 +74,8 @@ MAX_CHUNK_UPLOAD_RETRIES = 3
 
 WITH_DOCKER = True
 
-WANDB_MAX_LOGS = 95_000
+WANDB_MAX_LOGS = 60_000
 
-BURNING_RATE = 1.0
-OWNER_HOTKEY = "5DCxc5oVJC8bPxoJ41tZYWesaXGBfHCkwGhzPduKwAM1APHf"
+SCORING_SYSTEM = "linear"  # "linear", "top"
+BURNING_RATE = 0.0
+OWNER_HOTKEY = "5DJ5fT174AY8GzbYHnamYQCJd4cTcj2Zf7ogUvBhry1KfYVd"

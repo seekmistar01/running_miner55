@@ -6,7 +6,7 @@ class GenomicSimulationTask(BaseModel):
     population_model: str
     population: str
     genome_model: str
-    chr_drugs: dict[str, dict]
+    gene_drugs: dict[str, list[str]]
     output: str = "vcf"
 
 class GroundTruthLabel(BaseModel):

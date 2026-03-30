@@ -224,7 +224,7 @@ class PharmCATValidator:
     
     def validate_miner_response(self, 
                               report_content: Dict[str, Any], 
-                              chr_drugs: dict[str, dict]) -> float:
+                              gene_drugs: dict[str, dict]) -> float:
         """
         Complete validation pipeline for a miner response.
         
@@ -238,25 +238,20 @@ class PharmCATValidator:
         try:
             score = 0
             genes = report_content.get("genes", "")
+            valid_genes = list(gene_drugs.keys())
             
             if isinstance(genes, dict):
-                gene_drugs: dict[str, list[str]] = {}
-                for chr in list(chr_drugs.keys()):
-                    chr_info = chr_drugs[chr]
-                    gene = chr_info.get("gene", "")
-                    gene_drugs[gene] = chr_info.get("drugs", [])
-                
                 for gene in genes:
-                    gene_info = genes.get(gene)
-                    if gene_info.get("phased", "false") == "false":
-                        continue
-                    elif gene not in list(gene_drugs.keys()):
+                    gene_info = genes.get(gene, {})
+                    if gene in valid_genes:
+                        if gene_info.get("phased", False) == True:
+                            score += 1
+                        else:
+                            score -= 1
+                    elif gene_info.get("phased", False) == True:
                         score -= 1
-                        continue
 
-                    score += 1
-
-            return max(0, score) / len(gene_drugs)
+            return max(0, score) / len(valid_genes)
         except Exception as e:
             bt.logging.error(f"Error in validation pipeline: {str(e)}")
             return 0

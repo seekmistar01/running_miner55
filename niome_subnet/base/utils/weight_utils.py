@@ -217,7 +217,39 @@ def process_weights_for_netuid(
     return non_zero_weight_uids, normalized_weights
 
 
-def process_scores(scores: np.ndarray) -> np.ndarray:
+def process_scores_linear(scores: np.ndarray) -> np.ndarray:
+    """
+    Convert raw miner scores into a normalized weight vector using linear proportional distribution:
+    - All miners with positive scores receive weights proportional to their score.
+    - Miners with zero or negative scores receive zero weight.
+    - Output always sums to exactly 1.0 (if any positive scores exist).
+    """
+    bt.logging.debug("Processing scores", scores)
+
+    weights = np.zeros_like(scores, dtype=np.float32)
+
+    # Filter positive scores
+    positive_mask = scores > 0
+    positive_scores = scores[positive_mask]
+
+    if positive_scores.size == 0:
+        return weights  # all zeros
+
+    total_score = np.sum(positive_scores)
+
+    # Safety check (very unlikely but good practice)
+    if total_score == 0:
+        # fallback to uniform distribution among positive miners
+        weights[positive_mask] = 1.0 / positive_scores.size
+        return weights
+
+    # Linear proportional distribution
+    weights[positive_mask] = positive_scores / total_score
+
+    return weights
+
+
+def process_scores_top(scores: np.ndarray) -> np.ndarray:
     """
     Convert raw miner scores into a final normalized weight vector:
     - Top {TOP_MINER_COUNT} miners receive most revenue according to SCORE_DISTRIBUTION.
@@ -241,11 +273,8 @@ def process_scores(scores: np.ndarray) -> np.ndarray:
         arg = (positive_score_num - TOP_MINER_COUNT) / scale
         alpha = 1 - (1 - TOP_MIN_ALPHA) * math.tanh(arg)
 
-    bt.logging.info(f"Computed alpha: {alpha}")
-
     # Top ratios (sum to 1.0)
-    ratios = np.array(list(SCORE_DISTRIBUTION.values()))
-    bt.logging.info(f"SCORE_DISTRIBUTION ratios: {ratios}")
+    ratios = np.array(SCORE_DISTRIBUTION)
 
     weights = np.zeros_like(scores, dtype=np.float32)
 
@@ -266,12 +295,16 @@ def process_scores(scores: np.ndarray) -> np.ndarray:
 
     if positive_score_num > TOP_MINER_COUNT:
         rest_alloc = 1.0 - alpha
-        rest_indices = sorted_indices[10:positive_score_num]
+        rest_indices = sorted_indices[TOP_MINER_COUNT:positive_score_num]
         rest_score = scores[rest_indices]
         if len(rest_score) > 0:
-            temp = 1
-            softmax = np.exp(rest_score / temp) / np.sum(np.exp(rest_score / temp))
+            shifted = rest_score - np.max(rest_score)
+
+            exp_scores = np.exp(shifted)
+            softmax = exp_scores / np.sum(exp_scores)
+
             rest_weights = softmax * rest_alloc
+
             for i, idx in enumerate(rest_indices):
                 weights[idx] = rest_weights[i]
 

@@ -63,16 +63,8 @@ def _extract_vcf_metadata(miner_vcf: str) -> Dict[str, Any]:
                 if len(parts) == 2:
                     key = parts[0].strip()
                     value = parts[1].strip()
-
-                    # Map to standard property names
-                    if key == "population_model":
-                        metadata["population_model"] = value
-                    elif key == "population":
-                        metadata["population"] = value
-                    elif key == "genome_model":
-                        metadata["genome_model"] = value
-                    elif key == "chromosomes":
-                        metadata["chromosomes"] = value
+                    if key in VCF_METADATA_KEYS:
+                        metadata[key] = value
 
     except Exception as e:
         bt.logging.warning(f"Error extracting VCF metadata: {e}")
@@ -88,21 +80,21 @@ def _compare_task_metadata(
     checks_passed = 0
     checks_total = 0
 
-    for key, metadata_key in VCF_METADATA_KEYS.items():
+    for key in VCF_METADATA_KEYS:
         if key not in task:
             continue
 
         checks_total += 1
         expected = str(task[key]).strip()
-        actual = str(extracted_metadata.get(metadata_key, "")).strip()
+        actual = str(extracted_metadata.get(key, "")).strip()
 
-        if _metadata_match(key, expected, actual):
+        if expected.lower() == actual.lower():
             checks_passed += 1
-            validation_result["details"][metadata_key] = "match"
+            validation_result["details"][key] = "match"
         else:
-            validation_result["details"][metadata_key] = "mismatch"
+            validation_result["details"][key] = "mismatch"
             validation_result["mismatches"].append(
-                f"{metadata_key}: expected '{expected}', got '{actual}'"
+                f"{key}: expected '{expected}', got '{actual}'"
             )
 
     # score
@@ -120,15 +112,3 @@ def _compare_task_metadata(
         validation_result["mismatches"].append("Missing miner_hotkey in metadata")
 
     return validation_result
-
-
-def _metadata_match(key: str, expected: str, actual: str) -> bool:
-    """Special comparison rules depending on metadata key."""
-    if key == "chr_drugs":
-        d = ast.literal_eval(expected)
-        e = ",".join(d.keys()).lower().replace("chr", "")
-        a = actual.lower().replace("chr", "")
-        return e == a
-
-    # Case-insensitive compare
-    return expected.lower() == actual.lower()

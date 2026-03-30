@@ -14,7 +14,7 @@ def compute_pharmcat_score(miner_vcf: str, task: dict) -> float:
             report_content = validator._run_pharmcat(vcf_path)
 
         return validator.validate_miner_response(
-            report_content, task.get("chr_drugs", {})
+            report_content, task.get("gene_drugs", {})
         )
     except Exception as e:
         bt.logging.error(f"Error computing PharmCAT score: {e}")

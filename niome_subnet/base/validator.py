@@ -30,7 +30,8 @@ import bittensor as bt
 
 from niome_subnet.base.neuron import BaseNeuron
 from niome_subnet.base.utils.weight_utils import (
-    process_scores,
+    process_scores_linear,
+    process_scores_top,
     process_weights_for_netuid,
     convert_weights_and_uids_for_emit,
     calculate_rankings,
@@ -38,7 +39,7 @@ from niome_subnet.base.utils.weight_utils import (
 from niome_subnet.genomics.vcf_handler import get_top3_vcf_files, submit_validation_result
 from niome_subnet.mock import MockDendrite
 from niome_subnet.utils.config import add_validator_args
-from niome_subnet.utils.constants import BURNING_RATE, OWNER_HOTKEY, SCORE_EMA_ALPHA
+from niome_subnet.utils.constants import BURNING_RATE, OWNER_HOTKEY, SCORE_EMA_ALPHA, SCORING_SYSTEM
 
 
 class BaseValidatorNeuron(BaseNeuron):
@@ -251,7 +252,11 @@ class BaseValidatorNeuron(BaseNeuron):
         # Compute the norm of the scores
         scores = np.nan_to_num(self.scores)
         original_scores = np.nan_to_num(self.scores).tolist()
-        processed_scores = process_scores(scores)
+
+        if SCORING_SYSTEM == "linear":
+            processed_scores = process_scores_linear(scores)
+        else:
+            processed_scores = process_scores_top(scores)
 
         norm = np.sum(np.abs(processed_scores)) or 1.0
         raw_weights = processed_scores / norm
@@ -424,7 +429,3 @@ class BaseValidatorNeuron(BaseNeuron):
         # self.step = state["step"]
         # self.scores = state["scores"]
         # self.hotkeys = state["hotkeys"]
-
-
-
-
