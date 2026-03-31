@@ -112,6 +112,7 @@ async def forward(self):
     """
     try:
         if len(self.remain_miner_uids) == 0:
+            self.set_weights()
             self.remain_miner_uids = get_miner_uids(self)
 
         miner_uids = get_random_uids(
