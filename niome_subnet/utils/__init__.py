@@ -12,15 +12,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from .constants import AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, CHUNK_SIZE, S3_UPLOAD_URL, MAX_CONCURRENT_UPLOADS, MAX_CHUNK_UPLOAD_RETRIES, WEIGHTS_S3_URL
 
 def read_weights_from_s3() -> Tuple[List[int], List[int], float]:
-    try:
-        response = requests.get(WEIGHTS_S3_URL)
-        data = response.json()
-        return data['uids'], data['weights'], data['timestamp']
-    except Exception as e:
-        bt.logging.error(f"Failed to read weights from S3: {e}")
-        return [], []
+    response = requests.get(WEIGHTS_S3_URL)
+    data = response.json()
+    uids = data['uids']
+    weights = data['weights']
 
-# https://niome-vcf-bucket.s3.us-east-1.amazonaws.com/weights
+    if len(uids) != len(weights):
+        raise ValueError(f"Length of uids and weights must match.")
+    if len(uids) == 0:
+        raise ValueError("Received empty uids and weights from S3.")
+
+    return uids, weights, data['timestamp']
+
 def upload_weights(uids: list[int], weights: list[int]) -> bool:
     try:
         uids = [int(u) for u in uids]

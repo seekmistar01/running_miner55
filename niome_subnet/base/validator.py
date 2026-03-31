@@ -354,7 +354,7 @@ class BaseValidatorNeuron(BaseNeuron):
                 bt.logging.error("set_weights failed", msg)
                 return False
         except Exception as e:
-            bt.logging.error(f"Failed to read weights from S3 or set weights on chain: {e}")
+            bt.logging.warning(e)
             return False
 
     def resync_metagraph(self):
