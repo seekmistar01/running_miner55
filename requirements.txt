@@ -74,3 +74,6 @@ websockets==15.0.1
 xxhash==3.6.0
 yarl==1.22.0
 wandb==0.25.0
+boto3==1.42.9
+botocore==1.42.9
+s3transfer==0.16.0
