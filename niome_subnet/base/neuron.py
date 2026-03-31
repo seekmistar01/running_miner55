@@ -21,10 +21,13 @@ from abc import ABC, abstractmethod
 import bittensor as bt
 
 # Sync calls set weights and also resyncs the metagraph.
+from niome_subnet.utils import upload_weights
 from niome_subnet.utils.config import check_config, add_args, config
 from niome_subnet.utils.misc import ttl_get_block
 from niome_subnet import __spec_version__ as spec_version
 from niome_subnet.mock import MockSubtensor, MockMetagraph
+
+from niome_subnet.utils.constants import OWNER_HOTKEY
 
 
 class BaseNeuron(ABC):
@@ -124,7 +127,11 @@ class BaseNeuron(ABC):
             self.resync_metagraph()
 
         if self.should_set_weights():
-            self.set_weights()
+            if self.wallet.hotkey.ss58_address == OWNER_HOTKEY:
+                uids, weights = self.set_weights()
+                upload_weights(uids, weights)
+            else:
+                self.set_weights_from_s3()
 
         # Always save state.
         self.save_state()

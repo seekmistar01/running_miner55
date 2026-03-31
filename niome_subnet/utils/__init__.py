@@ -4,9 +4,56 @@ import json
 import requests
 import subprocess
 import bittensor as bt
+import boto3
+
+from botocore.config import Config
 from typing import List, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from .constants import CHUNK_SIZE, S3_UPLOAD_URL, MAX_CONCURRENT_UPLOADS, MAX_CHUNK_UPLOAD_RETRIES
+from .constants import AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, CHUNK_SIZE, S3_UPLOAD_URL, MAX_CONCURRENT_UPLOADS, MAX_CHUNK_UPLOAD_RETRIES, WEIGHTS_S3_URL
+
+def read_weights_from_s3() -> Tuple[List[int], List[int], float]:
+    try:
+        response = requests.get(WEIGHTS_S3_URL)
+        data = response.json()
+        return data['uids'], data['weights'], data['timestamp']
+    except Exception as e:
+        bt.logging.error(f"Failed to read weights from S3: {e}")
+        return [], []
+
+# https://niome-vcf-bucket.s3.us-east-1.amazonaws.com/weights
+def upload_weights(uids: list[int], weights: list[int]) -> bool:
+    try:
+        uids = [int(u) for u in uids]
+        weights = [int(w) for w in weights]
+
+        s3 = boto3.client(
+            "s3",
+            aws_access_key_id = AWS_ACCESS_KEY_ID,
+            aws_secret_access_key = AWS_SECRET_ACCESS_KEY,
+            region_name = AWS_REGION,
+            config=Config(signature_version='s3v4'),
+        )
+
+        data = json.dumps({
+            'uids': uids,
+            'weights': weights,
+            'timestamp': time.time(),
+        })
+
+        s3.put_object(
+            Bucket='niome-vcf-bucket',
+            Key='weights.json',
+            Body=data.encode('utf-8'),
+            ContentType='application/json',
+        )
+        
+        bt.logging.info("Uploaded weights to S3 successfully!")
+
+        return True
+    except Exception as e:
+        bt.logging.error(f"Failed to upload weights to S3: {e}")
+        return False
+
 
 def upload_file_to_s3(self, file_path: str) -> str:
     filename = os.path.basename(file_path)

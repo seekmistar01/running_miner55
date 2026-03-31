@@ -17,16 +17,17 @@
 # DEALINGS IN THE SOFTWARE.
 
 
-import copy
-import numpy as np
 import asyncio
 import argparse
+import bittensor as bt
+import copy
+import numpy as np
+import os
 import threading
+
 from datetime import datetime, timezone
 from typing import List, Union
 from traceback import print_exception
-
-import bittensor as bt
 
 from niome_subnet.base.neuron import BaseNeuron
 from niome_subnet.base.utils.weight_utils import (
@@ -38,6 +39,7 @@ from niome_subnet.base.utils.weight_utils import (
 )
 from niome_subnet.genomics.vcf_handler import get_top3_vcf_files, submit_validation_result
 from niome_subnet.mock import MockDendrite
+from niome_subnet.utils import read_weights_from_s3
 from niome_subnet.utils.config import add_validator_args
 from niome_subnet.utils.constants import BURNING_RATE, OWNER_HOTKEY, SCORE_EMA_ALPHA, SCORING_SYSTEM
 
@@ -232,7 +234,7 @@ class BaseValidatorNeuron(BaseNeuron):
             self.is_running = False
             bt.logging.debug("Stopped")
 
-    def set_weights(self):
+    def set_weights(self) -> tuple[list[int], list[int]]:
         """
         Sets the validator weights on-chain.
         Miners receive total weight * (1 - BURNING_RATE)
@@ -317,8 +319,43 @@ class BaseValidatorNeuron(BaseNeuron):
         )
         if result:
             bt.logging.info("set_weights on chain successfully!")
+            return uint_uids, uint_weights
         else:
             bt.logging.error("set_weights failed", msg)
+            return [], []
+
+    def set_weights_from_s3(self) -> bool:
+        try:
+            uids, weights, timestamp = read_weights_from_s3()
+            bt.logging.info(f"Read weights from S3: {uids} {weights} {timestamp}")
+
+            path = os.path.expanduser("~/weights_timestamp.txt")
+            with open(path, "w+") as f:
+                content = f.read().strip()
+                last_timestamp = float(content) if content else 0
+                f.write(str(timestamp))
+
+            if timestamp <= last_timestamp:
+                return False
+
+            result, msg = self.subtensor.set_weights(
+                wallet=self.wallet,
+                netuid=self.config.netuid,
+                uids=uids,
+                weights=weights,
+                wait_for_finalization=False,
+                wait_for_inclusion=False,
+            )
+
+            if result:
+                bt.logging.info("set_weights on chain successfully!")
+                return True
+            else:
+                bt.logging.error("set_weights failed", msg)
+                return False
+        except Exception as e:
+            bt.logging.error(f"Failed to read weights from S3 or set weights on chain: {e}")
+            return False
 
     def resync_metagraph(self):
         """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""
