@@ -27,7 +27,7 @@ from niome_subnet.utils.misc import ttl_get_block
 from niome_subnet import __spec_version__ as spec_version
 from niome_subnet.mock import MockSubtensor, MockMetagraph
 
-from niome_subnet.utils.constants import OWNER_HOTKEY
+from niome_subnet.utils.constants import BASE_BLOCK_NUMBER, EPOCH, OWNER_HOTKEY
 
 
 class BaseNeuron(ABC):
@@ -166,9 +166,8 @@ class BaseNeuron(ABC):
             return False
 
         # Define appropriate logic for when set weights.
-        return (
-            self.block - self.metagraph.last_update[self.uid]
-        ) > self.config.neuron.epoch_length and self.neuron_type != "MinerNeuron"  # don't set weights if you're a miner
+        rest_blocks = 360 - (self.block - BASE_BLOCK_NUMBER) % EPOCH
+        return rest_blocks < 10 and self.neuron_type != "MinerNeuron"  # don't set weights if you're a miner
 
     def save_state(self):
         bt.logging.trace(

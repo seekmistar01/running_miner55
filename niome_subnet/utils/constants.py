@@ -85,3 +85,6 @@ WEIGHTS_S3_URL = "https://niome-vcf-bucket.s3.us-east-1.amazonaws.com/weights.js
 AWS_ACCESS_KEY_ID = ""
 AWS_SECRET_ACCESS_KEY = ""
 AWS_REGION = ""
+
+BASE_BLOCK_NUMBER = 7875516
+EPOCH = 360
