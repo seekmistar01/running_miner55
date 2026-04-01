@@ -335,6 +335,7 @@ class BaseValidatorNeuron(BaseNeuron):
                 last_timestamp = float(content) if content else 0
                 f.write(str(timestamp))
 
+            bt.logging.info(f"Last upload time: {last_timestamp}")
             if timestamp <= last_timestamp:
                 return False
 
