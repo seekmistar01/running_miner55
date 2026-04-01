@@ -333,20 +333,22 @@ class BaseValidatorNeuron(BaseNeuron):
             with open(path, "w+") as f:
                 content = f.read().strip()
                 last_timestamp = float(content) if content else 0
+
+                bt.logging.info(f"Last timestamp: {last_timestamp}")
+
+                if timestamp <= last_timestamp:
+                    return False
+
+                result, msg = self.subtensor.set_weights(
+                    wallet=self.wallet,
+                    netuid=self.config.netuid,
+                    uids=uids,
+                    weights=weights,
+                    wait_for_finalization=False,
+                    wait_for_inclusion=False,
+                )
+                
                 f.write(str(timestamp))
-
-            bt.logging.info(f"Last upload time: {last_timestamp}")
-            if timestamp <= last_timestamp:
-                return False
-
-            result, msg = self.subtensor.set_weights(
-                wallet=self.wallet,
-                netuid=self.config.netuid,
-                uids=uids,
-                weights=weights,
-                wait_for_finalization=False,
-                wait_for_inclusion=False,
-            )
 
             if result:
                 bt.logging.info("set_weights on chain successfully!")
