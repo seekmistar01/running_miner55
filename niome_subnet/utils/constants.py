@@ -77,7 +77,7 @@ WITH_DOCKER = True
 WANDB_MAX_LOGS = 60_000
 
 SCORING_SYSTEM = "linear"  # "linear", "top"
-BURNING_RATE = 1.0
+BURNING_RATE = 0.0
 OWNER_HOTKEY = "5DJ5fT174AY8GzbYHnamYQCJd4cTcj2Zf7ogUvBhry1KfYVd"
 
 WEIGHTS_S3_URL = "https://niome-vcf-bucket.s3.us-east-1.amazonaws.com/weights.json"
