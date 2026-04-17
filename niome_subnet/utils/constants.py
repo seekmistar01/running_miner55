@@ -18,7 +18,7 @@ TASK_URL = f"{BASE_URL}/api/tasks"
 
 
 # ---- Timeout Values -----
-TASK_REQUEST_TIMEOUT = 10  # seconds
+TASK_REQUEST_TIMEOUT = 60  # seconds
 BASE_DELAY_SECONDS = 2  # seconds
 SUBMIT_REQUEST_TIMEOUT = 30  # seconds
 
