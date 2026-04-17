@@ -16,13 +16,11 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-
 import asyncio
 import argparse
 import bittensor as bt
 import copy
 import numpy as np
-import os
 import threading
 
 from datetime import datetime, timezone
@@ -30,18 +28,18 @@ from typing import List, Union
 from traceback import print_exception
 
 from niome_subnet.base.neuron import BaseNeuron
-from niome_subnet.base.utils.weight_utils import (
+from niome_subnet.genomics.model import MinerScore, MinerScoreDto
+from niome_subnet.genomics.vcf_handler import submit_validation_result
+from niome_subnet.utils import (
+    add_validator_args,
+    convert_weights_and_uids_for_emit,
     process_scores_linear,
     process_scores_top,
     process_weights_for_netuid,
-    convert_weights_and_uids_for_emit,
-    calculate_rankings,
 )
-from niome_subnet.genomics.vcf_handler import get_top3_vcf_files, submit_validation_result
 from niome_subnet.mock import MockDendrite
-from niome_subnet.utils import read_weights_from_s3
-from niome_subnet.utils.config import add_validator_args
-from niome_subnet.utils.constants import BURNING_RATE, OWNER_HOTKEY, SCORE_EMA_ALPHA, SCORING_SYSTEM
+
+from niome_subnet.utils.constants import BURNING_RATE, OWNER_HOTKEY, SCORING_SYSTEM
 
 
 class BaseValidatorNeuron(BaseNeuron):
@@ -92,8 +90,7 @@ class BaseValidatorNeuron(BaseNeuron):
         self.is_running: bool = False
         self.thread: Union[threading.Thread, None] = None
         self.lock = asyncio.Lock()
-
-        self.remain_miner_uids = np.array([])
+        self.is_validating = False
 
     def serve_axon(self):
         """Serve axon to enable external connections."""
@@ -234,38 +231,29 @@ class BaseValidatorNeuron(BaseNeuron):
             self.is_running = False
             bt.logging.debug("Stopped")
 
-    def set_weights(self) -> tuple[list[int], list[int]]:
+    def set_weights(self, scores: List[MinerScore], task_id: str):
         """
         Sets the validator weights on-chain.
         Miners receive total weight * (1 - BURNING_RATE)
         OWNER_HOTKEY receives the remaining BURNING_RATE
         """
-
-        # Check if self.scores contains any NaN values and log a warning if it does.
-        if np.isnan(self.scores).any():
-            bt.logging.warning(
-                "Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
-            )
-
         owner_uid = self.metagraph.hotkeys.index(OWNER_HOTKEY)
 
-        # Calculate the average reward for each uid across non-zero values.
-        # Replace any NaN values with 0.
-        # Compute the norm of the scores
-        scores = np.nan_to_num(self.scores)
-        original_scores = np.nan_to_num(self.scores).tolist()
+        scores_array = np.zeros(self.metagraph.n, dtype=np.float32)
+        for ms in scores:
+            if 0 <= ms.uid < self.metagraph.n:
+                scores_array[ms.uid] = ms.final_score
+        scores_array = np.nan_to_num(scores_array)
 
+        # process_scores_* already return a normalized weight vector summing to 1.0
         if SCORING_SYSTEM == "linear":
-            processed_scores = process_scores_linear(scores)
+            processed_scores = process_scores_linear(scores_array)
         else:
-            processed_scores = process_scores_top(scores)
-
-        norm = np.sum(np.abs(processed_scores)) or 1.0
-        raw_weights = processed_scores / norm
+            processed_scores = process_scores_top(scores_array)
 
         processed_weight_uids, processed_weights = process_weights_for_netuid(
             uids=self.metagraph.uids,
-            weights=raw_weights,
+            weights=processed_scores,
             netuid=self.config.netuid,
             owner_uid=owner_uid,
             subtensor=self.subtensor,
@@ -292,15 +280,18 @@ class BaseValidatorNeuron(BaseNeuron):
 
         bt.logging.info(f"Weights: {final_weights}")
 
-        rankings = calculate_rankings(self.metagraph, full_miner_weights, owner_uid)
-        top_vcf_files = get_top3_vcf_files(rankings[:3])
+        miner_score_dtos: list[MinerScoreDto] = [
+            MinerScoreDto(
+                task_id=task_id,
+                miner=self.metagraph.hotkeys[ms.uid],
+                score=ms.final_score,
+                weight=float(final_weights[ms.uid]),
+            )
+            for ms in scores
+            if 0 <= ms.uid < self.metagraph.n
+        ]
 
-        submit_validation_result(
-            self,
-            scores=original_scores,
-            weights=final_weights.tolist(),
-            top3_vcf_files=top_vcf_files,
-        )
+        submit_validation_result(self, miner_scores=miner_score_dtos)
 
         final_uids = np.where(final_weights > 1e-8)[0].tolist()
         final_weight_values = final_weights[final_uids].tolist()
@@ -319,46 +310,8 @@ class BaseValidatorNeuron(BaseNeuron):
         )
         if result:
             bt.logging.info("set_weights on chain successfully!")
-            return uint_uids, uint_weights
         else:
             bt.logging.error("set_weights failed", msg)
-            return [], []
-
-    def set_weights_from_s3(self) -> bool:
-        try:
-            uids, weights, timestamp = read_weights_from_s3()
-            bt.logging.info(f"Read weights from S3: {uids} {weights} {timestamp}")
-
-            path = os.path.expanduser("~/weights_timestamp.txt")
-            with open(path, "w+") as f:
-                content = f.read().strip()
-                last_timestamp = float(content) if content else 0
-
-                bt.logging.info(f"Last timestamp: {last_timestamp}")
-
-                if timestamp <= last_timestamp:
-                    return False
-
-                result, msg = self.subtensor.set_weights(
-                    wallet=self.wallet,
-                    netuid=self.config.netuid,
-                    uids=uids,
-                    weights=weights,
-                    wait_for_finalization=False,
-                    wait_for_inclusion=False,
-                )
-                
-                f.write(str(timestamp))
-
-            if result:
-                bt.logging.info("set_weights on chain successfully!")
-                return True
-            else:
-                bt.logging.error("set_weights failed", msg)
-                return False
-        except Exception as e:
-            bt.logging.warning(e)
-            return False
 
     def resync_metagraph(self):
         """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""
@@ -387,68 +340,6 @@ class BaseValidatorNeuron(BaseNeuron):
             self.file_names = new_file_names
 
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
-
-    async def update_scores(self, rewards: np.ndarray, uids: List[int]):
-        """Performs exponential moving average on the scores based on the rewards received from the miners. Thread-safe with asyncio.Lock."""
-        async with self.lock:
-            # `rewards` is expected to be a list of (score, filename) tuples.
-            if rewards is None or len(rewards) == 0:
-                reward_scores = np.array([], dtype=np.float32)
-                file_names = np.array([], dtype=object)
-            else:
-                reward_scores_list, file_names_list = zip(*rewards)
-                reward_scores = np.array(reward_scores_list, dtype=np.float32)
-                file_names = np.array(file_names_list, dtype=object)
-
-            # Check for NaNs in numeric rewards and warn.
-            if reward_scores.size > 0 and np.isnan(reward_scores).any():
-                bt.logging.warning(f"NaN values detected in reward_scores: {reward_scores}")
-
-            # Replace any NaN values in rewards with 0.
-            reward_scores = np.nan_to_num(reward_scores, nan=0)
-
-            # Check if `uids` is already a numpy array and copy it to avoid the warning.
-            if isinstance(uids, np.ndarray):
-                uids_array = uids.copy()
-            else:
-                uids_array = np.array(uids)
-
-            # Update `self.file_names` for the corresponding uids.
-            try:
-                if file_names.size == uids_array.size:
-                    self.file_names[uids_array] = file_names
-                else:
-                    bt.logging.warning(
-                        "Mismatch between file_names and uids size; skipping file_names update."
-                    )
-            except Exception as e:
-                bt.logging.error(f"Failed to update file_names: {e}")
-
-            # Handle edge case: If either rewards or uids_array is empty.
-            if reward_scores.size == 0 or uids_array.size == 0:
-                bt.logging.info(f"rewards: {reward_scores}, uids_array: {uids_array}")
-                bt.logging.warning(
-                    "Either rewards or uids_array is empty. No updates will be performed."
-                )
-                return
-
-            # Check if sizes of rewards and uids_array match.
-            if reward_scores.size != uids_array.size:
-                raise ValueError(
-                    f"Shape mismatch: rewards array of shape {reward_scores.shape} "
-                    f"cannot be broadcast to uids array of shape {uids_array.shape}"
-                )
-
-            # Compute forward pass rewards, assumes uids are mutually exclusive.
-            # shape: [ metagraph.n ]
-            scattered_rewards = np.zeros_like(self.scores)
-            scattered_rewards[uids_array] = reward_scores
-
-            # Update scores with rewards produced by this step.
-            # shape: [ metagraph.n ]
-            self.scores = (
-                SCORE_EMA_ALPHA * scattered_rewards + (1 - SCORE_EMA_ALPHA) * self.scores
-            )
 
     def save_state(self):
         """Saves the state of the validator to a file."""

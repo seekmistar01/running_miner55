@@ -27,11 +27,8 @@ import wandb
 
 # import base validator class which takes care of most of the boilerplate
 from niome_subnet.base.validator import BaseValidatorNeuron
-
-# Bittensor Validator forward function
+from niome_subnet.utils import TESTNET_UID
 from niome_subnet.validator import forward
-
-from niome_subnet.utils.constants import TESTNET_UID
 
 bt.logging.on()
 

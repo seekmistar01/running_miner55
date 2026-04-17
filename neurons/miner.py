@@ -72,13 +72,6 @@ class Miner(BaseMinerNeuron):
             # TODO: Generate VCF file based on JSON schema task
             vcf_content = ""
 
-            if (
-                not vcf_content
-                or not isinstance(vcf_content, str)
-                or len(vcf_content) == 0
-            ):
-                raise Exception("Failed to generate VCF content")
-
             # Check timeout window
             elapsed_time = time.time() - start_time
 

@@ -1,21 +1,44 @@
 from pydantic import BaseModel
 from typing import Generic, TypeVar
 
-class GenomicSimulationTask(BaseModel):
-    id : str
-    population_model: str
-    population: str
-    genome_model: str
-    gene_drugs: dict[str, list[str]]
-    output: str = "vcf"
 
-class GroundTruthLabel(BaseModel):
-    """Ground truth label from PharmaCAT analysis."""
+class TaskInput(BaseModel):
+    read1_fastq: str
+    read2_fastq: str
 
-    match: str  # Allele information
-    phenotype: str  # Clinical phenotype
-    canonical_phenotype: str  # Canonical phenotype
-    drug_name: str  # Drug name
+
+class TaskOutputSpec(BaseModel):
+    format: str
+    required_fields: list[str]
+
+
+class TaskGenomeContext(BaseModel):
+    chromosome: str
+    region: str
+    gene: str
+
+
+class Task(BaseModel):
+    task_id: str
+    version: str
+    type: str
+
+    input: TaskInput
+    output_spec: TaskOutputSpec
+    genome_context: TaskGenomeContext
+    expected_variant_count: int
+
+
+class GroundTruth(BaseModel):
+    truth_vcf: str
+    ref: str
+
+
+class MinerSubmission(BaseModel):
+    uid: int
+    vcf_content: str
+    response_time: float
+
 
 class ValidationContext:
     """Container for all validation metadata."""
@@ -29,6 +52,7 @@ class ValidationContext:
         self.miner_hotkey = miner_hotkey
         self.validator_uid = validator_uid
         self.validator_hotkey = validator_hotkey
+
 
 class TaskPayload(BaseModel):
     """Payload structure for task generation requests."""
@@ -46,26 +70,19 @@ class SignedRequest(BaseModel, Generic[PayloadType]):
     payload_raw: str
     signature: str
 
-class MinerScoreDto:
+
+class MinerScore(BaseModel):
+    uid: int
+    precision: float
+    recall: float
+    f1_score: float
+    response_time: float
+    final_score: float
+
+
+class MinerScoreDto(BaseModel):
     """Data transfer object for miner score submission."""
     task_id: str
-    miner_hotkey: str
-    score: str
-    weight: str
-    file_path: str  # s3 path
-
-    def __init__(self, task_id: str = "", miner_hotkey: str = "", score: str = "", weight: str = "", file_path: str = ""):
-        self.task_id = task_id
-        self.miner_hotkey = miner_hotkey
-        self.score = score
-        self.weight = weight
-        self.file_path = file_path
-
-    def to_dict(self):
-        return {
-            "task_id": self.task_id,
-            "miner_hotkey": self.miner_hotkey,
-            "score": self.score,
-            "weight": self.weight,
-            "file_path": self.file_path,
-        }
+    miner: str
+    score: float
+    weight: float

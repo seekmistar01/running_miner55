@@ -21,13 +21,11 @@ from abc import ABC, abstractmethod
 import bittensor as bt
 
 # Sync calls set weights and also resyncs the metagraph.
-from niome_subnet.utils import upload_weights
-from niome_subnet.utils.config import check_config, add_args, config
-from niome_subnet.utils.misc import ttl_get_block
 from niome_subnet import __spec_version__ as spec_version
+from niome_subnet.utils import check_config, add_args, config, ttl_get_block
 from niome_subnet.mock import MockSubtensor, MockMetagraph
 
-from niome_subnet.utils.constants import BASE_BLOCK_NUMBER, EPOCH, OWNER_HOTKEY
+from niome_subnet.utils.constants import BASE_BLOCK_NUMBER, INTERVAL_BLOCKS
 
 
 class BaseNeuron(ABC):
@@ -126,13 +124,6 @@ class BaseNeuron(ABC):
         if self.should_sync_metagraph():
             self.resync_metagraph()
 
-        if self.should_set_weights():
-            if self.wallet.hotkey.ss58_address == OWNER_HOTKEY:
-                uids, weights = self.set_weights()
-                upload_weights(uids, weights)
-            else:
-                self.set_weights_from_s3()
-
         # Always save state.
         self.save_state()
 
@@ -165,9 +156,7 @@ class BaseNeuron(ABC):
         if self.config.neuron.disable_set_weights:
             return False
 
-        # Define appropriate logic for when set weights.
-        rest_blocks = 360 - (self.block - BASE_BLOCK_NUMBER) % EPOCH
-        return rest_blocks < 10 and self.neuron_type != "MinerNeuron"  # don't set weights if you're a miner
+        return False
 
     def save_state(self):
         bt.logging.trace(

@@ -1,13 +1,9 @@
 import bittensor as bt
-import math
 import numpy as np
-from typing import Dict, Tuple, List, Union, Any
+from typing import Any, Tuple, List, Union
 from niome_subnet.utils.constants import (
     SCORE_DISTRIBUTION,
-    TOP_MIN_ALPHA,
-    TOP_MIN_ALPHA_SCALE,
     TOP_MINER_COUNT,
-    METADATA_SCORE_WEIGHT
 )
 
 U32_MAX = 4294967295
@@ -98,7 +94,7 @@ def convert_weights_and_uids_for_emit(
     else:
         max_weight = float(np.max(weights))
         weights = [
-            float(value) / max_weight for value in weights
+            float(value) for value in weights
         ]  # max-upscale values (max_weight = 1).
 
     weight_vals = []
@@ -252,95 +248,28 @@ def process_scores_linear(scores: np.ndarray) -> np.ndarray:
 def process_scores_top(scores: np.ndarray) -> np.ndarray:
     """
     Convert raw miner scores into a final normalized weight vector:
-    - Top {TOP_MINER_COUNT} miners receive most revenue according to SCORE_DISTRIBUTION.
-    - Remaining miners share the rest using a linear decreasing distribution.
-    - Output always sums to exactly 1.0.
+    - Only the top TOP_MINER_COUNT miners (with positive scores) receive weight.
+    - Weights are assigned according to SCORE_DISTRIBUTION, normalized if fewer
+      positive miners than TOP_MINER_COUNT.
+    - All other miners receive zero weight.
+    - Output always sums to exactly 1.0 (if any positive scores exist).
     """
-    # Filter positive scores and their indices
-    positive_marks = scores > 0
-    positive_score_num = np.sum(positive_marks)
+    positive_score_num = int(np.sum(scores > 0))
     if positive_score_num == 0:
         return np.zeros_like(scores)
 
-    # Sort indices by descending scores
+    # Sort indices by descending score; only consider positive miners
     sorted_indices = np.argsort(-scores)
 
-    # compute alpha
-    scale = TOP_MIN_ALPHA_SCALE
-    if positive_score_num <= TOP_MINER_COUNT:
-        alpha = 1.0
-    else:
-        arg = (positive_score_num - TOP_MINER_COUNT) / scale
-        alpha = 1 - (1 - TOP_MIN_ALPHA) * math.tanh(arg)
-
-    # Top ratios (sum to 1.0)
     ratios = np.array(SCORE_DISTRIBUTION)
-
     weights = np.zeros_like(scores, dtype=np.float32)
 
     k = min(TOP_MINER_COUNT, positive_score_num)
     top_ratios = ratios[:k]
     top_sum = np.sum(top_ratios)
-    # If positive_score_num < TOP_MINER_COUNT, normalize top_ratios, else just scale
-    # Use np.divide with where to avoid division by zero
-    norm_top_ratios = np.divide(top_ratios, top_sum, out=np.zeros_like(top_ratios), where=top_sum!=0)
-    top_weights = np.where(
-        positive_score_num < TOP_MINER_COUNT,
-        norm_top_ratios * alpha,
-        top_ratios * alpha
-    )
+    norm_ratios = top_ratios / top_sum if top_sum > 0 else np.ones(k) / k
 
     for i in range(k):
-        weights[sorted_indices[i]] = top_weights[i]
-
-    if positive_score_num > TOP_MINER_COUNT:
-        rest_alloc = 1.0 - alpha
-        rest_indices = sorted_indices[TOP_MINER_COUNT:positive_score_num]
-        rest_score = scores[rest_indices]
-        if len(rest_score) > 0:
-            shifted = rest_score - np.max(rest_score)
-
-            exp_scores = np.exp(shifted)
-            softmax = exp_scores / np.sum(exp_scores)
-
-            rest_weights = softmax * rest_alloc
-
-            for i, idx in enumerate(rest_indices):
-                weights[idx] = rest_weights[i]
+        weights[sorted_indices[i]] = norm_ratios[i]
 
     return weights
-
-
-def calculate_rankings(mg: Dict[str, Any], scores: List[float], owner_uid: int) -> List[Dict[str, Any]]:
-    """
-    Calculate rankings based on scores.
-
-    Args:
-        scores: List of scores for each miner
-
-    Returns:
-        List of dictionaries with uid, score, and rank
-    """
-    # Get UIDs from metagraph
-    uids = mg.uids.tolist()
-
-    # Create list of (uid, score) pairs
-    uid_score_pairs = list(zip(uids, scores))
-
-    # Sort by score in descending order
-    sorted_pairs = sorted(uid_score_pairs, key=lambda x: x[1], reverse=True)
-
-    # Create rankings with rank information
-    rankings = []
-    for rank, (uid, score) in enumerate(sorted_pairs, 1):
-        if score > (METADATA_SCORE_WEIGHT + 0.1) and uid != owner_uid:
-            rankings.append(
-                {
-                    "uid": int(uid),
-                    "score": float(score),
-                    "rank": rank,
-                    "hotkey": (mg.hotkeys[uid] if uid < len(mg.hotkeys) else "unknown"),
-                }
-            )
-
-    return rankings

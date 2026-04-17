@@ -24,7 +24,7 @@ import traceback
 import bittensor as bt
 
 from niome_subnet.base.neuron import BaseNeuron
-from niome_subnet.utils.config import add_miner_args
+from niome_subnet.utils import add_miner_args
 
 from typing import Union
 

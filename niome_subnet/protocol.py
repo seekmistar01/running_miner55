@@ -9,13 +9,13 @@ from typing import Dict, Any, Optional
 
 import bittensor as bt
 
-from niome_subnet.genomics.model import GenomicSimulationTask
+from niome_subnet.genomics.model import Task
 
 class GenomicsTaskSynapse(bt.Synapse):
     """Protocol for genomics simulation tasks."""
 
     # Input fields
-    task: Optional[GenomicSimulationTask] = None
+    task: Optional[Task] = None
     timeout: Optional[float] = None  # Timeout window for submission
 
     # Output fields

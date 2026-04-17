@@ -1,5 +1,4 @@
 from .forward import forward
-from .reward import get_rewards
 
 __version__ = "1.0.0"
 version_split = __version__.split(".")
