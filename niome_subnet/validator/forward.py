@@ -142,7 +142,7 @@ async def run_validation(self):
         miner_uids = get_miner_uids(self)
         final_scores = []
         miner_task, ground_truth = await fetch_task(self)
-        bt.logging.info(f"Fetched task: {task.model_dump()}")
+        bt.logging.info(f"Fetched task: {miner_task.model_dump()}")
         task = copy.deepcopy(miner_task)
 
         # Download ground truth data first (ref needed by create_mapping_file)

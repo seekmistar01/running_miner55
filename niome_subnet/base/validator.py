@@ -90,8 +90,6 @@ class BaseValidatorNeuron(BaseNeuron):
         self.is_running: bool = False
         self.thread: Union[threading.Thread, None] = None
         self.lock = asyncio.Lock()
-        self.uids: List[int] = []
-        self.weights: List[int] = []
         self.is_validating = False
 
     def serve_axon(self):
@@ -350,10 +348,8 @@ class BaseValidatorNeuron(BaseNeuron):
         np.savez(
             self.config.neuron.full_path + "/state.npz",
             step=self.step,
-            scores=self.scores,
             uids=self.uids,
             weights=self.weights,
-            hotkeys=self.hotkeys,
         )
 
     def load_state(self):
@@ -362,7 +358,5 @@ class BaseValidatorNeuron(BaseNeuron):
 
         state = np.load(self.config.neuron.full_path + "/state.npz")
         self.step = state["step"]
-        self.scores = state["scores"]
         self.uids = state["uids"]
         self.weights = state["weights"]
-        self.hotkeys = state["hotkeys"]

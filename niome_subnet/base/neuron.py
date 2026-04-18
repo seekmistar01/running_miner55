@@ -25,7 +25,7 @@ from niome_subnet import __spec_version__ as spec_version
 from niome_subnet.utils import check_config, add_args, config, ttl_get_block
 from niome_subnet.mock import MockSubtensor, MockMetagraph
 
-from niome_subnet.utils.constants import BASE_BLOCK_NUMBER, INTERVAL_BLOCKS
+from niome_subnet.utils.constants import BASE_BLOCK_NUMBER, INTERVAL_BLOCKS, WEIGHT_SET_BLOCK
 
 
 class BaseNeuron(ABC):
@@ -94,6 +94,9 @@ class BaseNeuron(ABC):
             # Fallback to metagraph.netuid if config doesn't provide it
             self.netuid = getattr(self.metagraph, "netuid", None)
 
+        self.uids: list[int] = []
+        self.weights: list[int] = []
+
         bt.logging.info(f"Wallet: {self.wallet}")
         bt.logging.info(f"Subtensor: {self.subtensor}")
         bt.logging.info(f"Metagraph: {self.metagraph}")
@@ -160,9 +163,13 @@ class BaseNeuron(ABC):
         if self.config.neuron.disable_set_weights:
             return False
 
+        # Check if the validator has uids and weights of the same length.
+        if len(self.uids) == 0 or len(self.uids) != len(self.weights):
+            return False
+
         blocks = (self.block - BASE_BLOCK_NUMBER) % INTERVAL_BLOCKS - WEIGHT_SET_BLOCK
 
-        return blocks < 5
+        return blocks >= 0 and blocks < 5
 
     def save_state(self):
         bt.logging.trace(
