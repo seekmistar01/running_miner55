@@ -72,7 +72,6 @@ def convert_weights_and_uids_for_emit(
         weight_vals (List[int]):
             Weights as a list.
     """
-    # Checks.
     uids = np.asarray(uids)
     weights = np.asarray(weights)
 
@@ -91,23 +90,17 @@ def convert_weights_and_uids_for_emit(
     if np.sum(weights) == 0:
         bt.logging.debug("nothing to set on chain")
         return [], []  # Nothing to set on chain.
-    else:
-        max_weight = float(np.max(weights))
-        weights = [
-            float(value) for value in weights
-        ]  # max-upscale values (max_weight = 1).
 
     weight_vals = []
     weight_uids = []
     for i, (weight_i, uid_i) in enumerate(list(zip(weights, uids))):
         uint16_val = round(
             float(weight_i) * int(U16_MAX)
-        )  # convert to int representation.
-
-        # Filter zeros
+        )
         if uint16_val != 0:  # Filter zeros
             weight_vals.append(uint16_val)
             weight_uids.append(uid_i)
+
     return weight_uids, weight_vals
 
 

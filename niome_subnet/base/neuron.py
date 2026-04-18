@@ -148,6 +148,10 @@ class BaseNeuron(ABC):
         ) > self.config.neuron.epoch_length
 
     def should_set_weights(self) -> bool:
+        # Don't set weights if you are a miner
+        if self.neuron_type == "MinerNeuron":
+            return False
+
         # Don't set weights on initialization.
         if self.step == 0:
             return False
@@ -156,7 +160,9 @@ class BaseNeuron(ABC):
         if self.config.neuron.disable_set_weights:
             return False
 
-        return False
+        blocks = (self.block - BASE_BLOCK_NUMBER) % INTERVAL_BLOCKS - WEIGHT_SET_BLOCK
+
+        return blocks < 5
 
     def save_state(self):
         bt.logging.trace(

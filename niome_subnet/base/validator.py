@@ -90,6 +90,8 @@ class BaseValidatorNeuron(BaseNeuron):
         self.is_running: bool = False
         self.thread: Union[threading.Thread, None] = None
         self.lock = asyncio.Lock()
+        self.uids: List[int] = []
+        self.weights: List[int] = []
         self.is_validating = False
 
     def serve_axon(self):
@@ -157,7 +159,21 @@ class BaseValidatorNeuron(BaseNeuron):
                 if self.should_exit:
                     break
 
-                # Sync metagraph and potentially set weights.
+                if self.should_set_weights():
+                    result, msg = self.subtensor.set_weights(
+                        wallet=self.wallet,
+                        netuid=self.config.netuid,
+                        uids=self.uids,
+                        weights=self.weights,
+                        wait_for_finalization=False,
+                        wait_for_inclusion=False,
+                    )
+                    if result:
+                        bt.logging.info("set_weights on chain successfully!")
+                    else:
+                        bt.logging.error("set_weights failed", msg)
+
+                # Sync metagraph.
                 self.sync()
 
                 self.step += 1
@@ -296,22 +312,9 @@ class BaseValidatorNeuron(BaseNeuron):
         final_uids = np.where(final_weights > 1e-8)[0].tolist()
         final_weight_values = final_weights[final_uids].tolist()
 
-        uint_uids, uint_weights = convert_weights_and_uids_for_emit(
+        self.uids, self.weights = convert_weights_and_uids_for_emit(
             uids=final_uids, weights=final_weight_values
         )
-
-        result, msg = self.subtensor.set_weights(
-            wallet=self.wallet,
-            netuid=self.config.netuid,
-            uids=uint_uids,
-            weights=uint_weights,
-            wait_for_finalization=False,
-            wait_for_inclusion=False,
-        )
-        if result:
-            bt.logging.info("set_weights on chain successfully!")
-        else:
-            bt.logging.error("set_weights failed", msg)
 
     def resync_metagraph(self):
         """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""
@@ -343,20 +346,23 @@ class BaseValidatorNeuron(BaseNeuron):
 
     def save_state(self):
         """Saves the state of the validator to a file."""
-        # # Save the state of the validator to file.
-        # np.savez(
-        #     self.config.neuron.full_path + "/state.npz",
-        #     step=self.step,
-        #     scores=self.scores,
-        #     hotkeys=self.hotkeys,
-        # )
+        # Save the state of the validator to file.
+        np.savez(
+            self.config.neuron.full_path + "/state.npz",
+            step=self.step,
+            scores=self.scores,
+            uids=self.uids,
+            weights=self.weights,
+            hotkeys=self.hotkeys,
+        )
 
     def load_state(self):
         """Loads the state of the validator from a file."""
         bt.logging.info("Loading validator state.")
 
-        # # Load the state of the validator from file.
-        # state = np.load(self.config.neuron.full_path + "/state.npz")
-        # self.step = state["step"]
-        # self.scores = state["scores"]
-        # self.hotkeys = state["hotkeys"]
+        state = np.load(self.config.neuron.full_path + "/state.npz")
+        self.step = state["step"]
+        self.scores = state["scores"]
+        self.uids = state["uids"]
+        self.weights = state["weights"]
+        self.hotkeys = state["hotkeys"]

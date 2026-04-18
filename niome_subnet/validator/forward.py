@@ -141,27 +141,25 @@ async def run_validation(self):
         os.makedirs("data", exist_ok=True)
         miner_uids = get_miner_uids(self)
         final_scores = []
+        miner_task, ground_truth = await fetch_task(self)
+        bt.logging.info(f"Fetched task: {task.model_dump()}")
+        task = copy.deepcopy(miner_task)
+
+        # Download ground truth data first (ref needed by create_mapping_file)
+        urllib.request.urlretrieve(ground_truth.truth_vcf, "data/truth.vcf")
+        ground_truth.truth_vcf = "data/truth.vcf"
+        urllib.request.urlretrieve(ground_truth.ref, "data/ref.fa")
+        ground_truth.ref = "data/ref.fa"
+
+        # Download task reads
+        urllib.request.urlretrieve(task.input.read1_fastq, "data/read_1.fq")
+        task.input.read1_fastq = "data/read_1.fq"
+        urllib.request.urlretrieve(task.input.read2_fastq, "data/read_2.fq")
+        task.input.read2_fastq = "data/read_2.fq"
+
+        bam = create_mapping_file(ground_truth.ref, task.input.read1_fastq, task.input.read2_fastq)
 
         while len(miner_uids) > 0:
-            miner_task, ground_truth = await fetch_task(self)
-
-            task = copy.deepcopy(miner_task)
-            bt.logging.info(f"Fetched task: {task.model_dump()}")
-
-            # Download ground truth data first (ref needed by create_mapping_file)
-            urllib.request.urlretrieve(ground_truth.truth_vcf, "data/truth.vcf")
-            ground_truth.truth_vcf = "data/truth.vcf"
-            urllib.request.urlretrieve(ground_truth.ref, "data/ref.fa")
-            ground_truth.ref = "data/ref.fa"
-
-            # Download task reads
-            urllib.request.urlretrieve(task.input.read1_fastq, "data/read_1.fq")
-            task.input.read1_fastq = "data/read_1.fq"
-            urllib.request.urlretrieve(task.input.read2_fastq, "data/read_2.fq")
-            task.input.read2_fastq = "data/read_2.fq"
-
-            bam = create_mapping_file(ground_truth.ref, task.input.read1_fastq, task.input.read2_fastq)
-
             selected_uids = get_random_uids(
                 self, k=config.MINER_QUERY_K, available_uids=miner_uids
             )
