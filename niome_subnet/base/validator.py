@@ -355,7 +355,6 @@ class BaseValidatorNeuron(BaseNeuron):
                 uids=self.uids,
                 weights=self.weights,
             )
-            bt.logging.info("Saved validator state.")
         except Exception as e:
             bt.logging.error(f"Failed to save state with exception: {e}")
 
