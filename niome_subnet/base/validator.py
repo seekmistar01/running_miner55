@@ -171,6 +171,9 @@ class BaseValidatorNeuron(BaseNeuron):
                     else:
                         bt.logging.error("set_weights failed", msg)
 
+                    self.uids = []
+                    self.weights = []
+
                 # Sync metagraph.
                 self.sync()
 
@@ -345,18 +348,27 @@ class BaseValidatorNeuron(BaseNeuron):
     def save_state(self):
         """Saves the state of the validator to a file."""
         # Save the state of the validator to file.
-        np.savez(
-            self.config.neuron.full_path + "/state.npz",
-            step=self.step,
-            uids=self.uids,
-            weights=self.weights,
-        )
+        try:
+            np.savez(
+                self.config.neuron.full_path + "/state.npz",
+                step=self.step,
+                uids=self.uids,
+                weights=self.weights,
+            )
+            bt.logging.info("Saved validator state.")
+        except Exception as e:
+            bt.logging.error(f"Failed to save state with exception: {e}")
 
     def load_state(self):
         """Loads the state of the validator from a file."""
         bt.logging.info("Loading validator state.")
-
-        state = np.load(self.config.neuron.full_path + "/state.npz")
-        self.step = state["step"]
-        self.uids = state["uids"]
-        self.weights = state["weights"]
+        try:
+            state = np.load(self.config.neuron.full_path + "/state.npz")
+            if isinstance(state["step"], (int, np.integer, np.ndarray)):
+                self.step = int(state["step"])
+            if isinstance(state["uids"], np.ndarray):
+                self.uids = state["uids"].tolist()
+            if isinstance(state["weights"], np.ndarray):
+                self.weights = state["weights"].tolist()
+        except Exception as e:
+            bt.logging.error(f"Failed to load state with exception: {e}")
