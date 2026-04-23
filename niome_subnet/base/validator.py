@@ -148,7 +148,7 @@ class BaseValidatorNeuron(BaseNeuron):
         # This loop maintains the validator's operations until intentionally stopped.
         try:
             while True:
-                bt.logging.info(f"step({self.step}) block({self.block})")
+                # bt.logging.info(f"step({self.step}) block({self.block})")
 
                 # Run multiple forwards concurrently.
                 self.loop.run_until_complete(self.concurrent_forward())
@@ -158,6 +158,7 @@ class BaseValidatorNeuron(BaseNeuron):
                     break
 
                 if self.should_set_weights():
+                    self.load_state()
                     result, msg = self.subtensor.set_weights(
                         wallet=self.wallet,
                         netuid=self.config.netuid,
@@ -316,6 +317,7 @@ class BaseValidatorNeuron(BaseNeuron):
         self.uids, self.weights = convert_weights_and_uids_for_emit(
             uids=final_uids, weights=final_weight_values
         )
+        self.save_state()
 
     def resync_metagraph(self):
         """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""

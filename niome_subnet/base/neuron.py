@@ -128,7 +128,7 @@ class BaseNeuron(ABC):
             self.resync_metagraph()
 
         # Always save state.
-        self.save_state()
+        # self.save_state()
 
     def check_registered(self):
         # --- Check for registration.
