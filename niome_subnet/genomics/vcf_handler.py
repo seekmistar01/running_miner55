@@ -59,5 +59,4 @@ def submit_validation_result(
                 time.sleep(delay)
     except Exception as e:
         bt.logging.error(f"Unexpected error in submit_validation_result: {e}")
-        raise ValueError(f"Unexpected error in submit_validation_result: {e}")
         
