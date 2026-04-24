@@ -15,6 +15,7 @@ SCORE_DISTRIBUTION = [0.6, 0.2, 0.05, 0.04, 0.03, 0.02, 0.02, 0.02, 0.01, 0.01]
 BASE_URL = "http://ec2-34-203-212-25.compute-1.amazonaws.com"
 MINER_SCORE_URL = f"{BASE_URL}/api/miner_scores"
 TASK_URL = f"{BASE_URL}/api/tasks"
+GROUND_TRUTH_URL = f"{BASE_URL}/api/tasks/ground_truth"
 
 
 # ---- Timeout Values -----
@@ -33,6 +34,7 @@ SCORING_SYSTEM = "top"  # "linear", "top"
 BURNING_RATE = 0.0
 OWNER_HOTKEY = "5DJ5fT174AY8GzbYHnamYQCJd4cTcj2Zf7ogUvBhry1KfYVd"
 
-BASE_BLOCK_NUMBER = 7980000
-INTERVAL_BLOCKS = 900
-WEIGHT_SET_BLOCK = 300
+BASE_BLOCK_NUMBER = 8034760
+INTERVAL_BLOCKS = 2400
+VALIDATION_BLOCK = 600
+WEIGHT_SET_BLOCK = 800

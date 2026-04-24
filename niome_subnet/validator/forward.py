@@ -33,12 +33,12 @@ from niome_subnet.genomics.scoring import create_mapping_file, score
 from niome_subnet.protocol import GenomicsTaskSynapse
 from niome_subnet.utils import get_miner_uids, get_random_uids
 
-from niome_subnet.utils.constants import BASE_BLOCK_NUMBER, INTERVAL_BLOCKS
+from niome_subnet.utils.constants import BASE_BLOCK_NUMBER, INTERVAL_BLOCKS, VALIDATION_BLOCK
 
 sem = asyncio.Semaphore(config.MINER_QUERY_K)
 
 
-async def fetch_task(self) -> tuple[Task, GroundTruth]:
+async def fetch_task(self) -> Task:
     """Generate a synthetic genomic simulation task with retry logic and fallback."""
     payload = {}
     timestamp = str(time.time())
@@ -73,15 +73,65 @@ async def fetch_task(self) -> tuple[Task, GroundTruth]:
                     data = await response.json()
                     
                     task_url = data.get("task_url", "")
-                    ground_truth_url = data.get("ground_truth_url", "")
 
-                    if not task_url or not ground_truth_url:
+                    if not task_url:
                         raise RuntimeError("Invalid response from backend")
 
                     task = await fetch_task_by_url(task_url)
+
+                    return task
+        except Exception as e:
+            bt.logging.error(f"Error on generating task (attempt {attempt}): {e}")
+            if attempt < config.MAX_TASK_RETRIES:
+                delay = config.BASE_DELAY_SECONDS * (2 ** (attempt - 1))
+                bt.logging.info(f"Retrying in {delay} seconds...")
+                await asyncio.sleep(delay)
+            else:
+                bt.logging.error("All retries failed, returning fallback sample data")
+                raise e
+
+async def fetch_ground_truth(self) -> GroundTruth:
+    """Generate a synthetic genomic simulation task with retry logic and fallback."""
+    payload = {}
+    timestamp = str(time.time())
+    canonical = json.dumps({
+        'payload': '{}',
+        'hotkey': self.wallet.hotkey.ss58_address,
+        'netuid': str(self.netuid),
+        'timestamp': timestamp,
+    }, separators=(',', ':'), sort_keys=True)
+
+    signature = self.wallet.hotkey.sign(canonical).hex()
+
+    for attempt in range(1, config.MAX_TASK_RETRIES + 1):
+        try:
+            async with aiohttp.ClientSession() as client:
+                async with client.post(
+                    config.GROUND_TRUTH_URL,
+                    headers=self.build_signature_headers(
+                        signature=signature,
+                        hotkey=self.wallet.hotkey.ss58_address,
+                        timestamp=timestamp,
+                        netuid=str(self.netuid),
+                    ),
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=config.TASK_REQUEST_TIMEOUT),
+                ) as response:
+                    if response.status != 201:
+                        raise RuntimeError(
+                            f"Backend returned status {response.status}"
+                        )
+
+                    data = await response.json()
+                    
+                    ground_truth_url = data.get("ground_truth_url", "")
+
+                    if not ground_truth_url:
+                        raise RuntimeError("Invalid response from backend")
+
                     ground_truth = await fetch_ground_truth_by_url(ground_truth_url)
 
-                    return task, ground_truth
+                    return ground_truth
         except Exception as e:
             bt.logging.error(f"Error on generating task (attempt {attempt}): {e}")
             if attempt < config.MAX_TASK_RETRIES:
@@ -135,21 +185,15 @@ async def query_axon_limited(self, axon, synapse) -> Optional[GenomicsTaskSynaps
     async with sem:
         return await query_axon(self, axon, synapse)
 
-async def run_validation(self):
-    bt.logging.info("Starting validation process...")
+async def fetch_miners_vcf(self):
+    bt.logging.info("Fetching miners' vcf...")
     try:
         os.makedirs("data", exist_ok=True)
         miner_uids = get_miner_uids(self)
-        final_scores = []
-        miner_task, ground_truth = await fetch_task(self)
+
+        miner_task = await fetch_task(self)
         bt.logging.info(f"Fetched task: {miner_task.model_dump()}")
         task = copy.deepcopy(miner_task)
-
-        # Download ground truth data first (ref needed by create_mapping_file)
-        urllib.request.urlretrieve(ground_truth.truth_vcf, "data/truth.vcf")
-        ground_truth.truth_vcf = "data/truth.vcf"
-        urllib.request.urlretrieve(ground_truth.ref, "data/ref.fa")
-        ground_truth.ref = "data/ref.fa"
 
         # Download task reads
         urllib.request.urlretrieve(task.input.read1_fastq, "data/read_1.fq")
@@ -157,53 +201,74 @@ async def run_validation(self):
         urllib.request.urlretrieve(task.input.read2_fastq, "data/read_2.fq")
         task.input.read2_fastq = "data/read_2.fq"
 
-        bam = create_mapping_file(ground_truth.ref, task.input.read1_fastq, task.input.read2_fastq)
-
-        while len(miner_uids) > 0:
-            selected_uids = get_random_uids(
-                self, k=config.MINER_QUERY_K, available_uids=miner_uids
-            )
-
-            bt.logging.info(f"Sending task to miners: {selected_uids}")
-            miner_uids = miner_uids[
-                ~np.isin(miner_uids, selected_uids)
-            ]
-
+        for uid in miner_uids:
             synapse = GenomicsTaskSynapse(task=miner_task, timeout=config.FORWARD_TIMEOUT)
 
-            axons = [self.metagraph.axons[uid] for uid in selected_uids]
+            axon = self.metagraph.axons[uid]
+            if axon.ip == '0.0.0.0':
+                continue
 
-            # The dendrite client queries the network.
-            tasks = [asyncio.create_task(query_axon_limited(self, axon, synapse)) for axon in axons]
-            raw_responses: List[Optional[GenomicsTaskSynapse]] = await asyncio.gather(*tasks, return_exceptions=True)
+            response = await query_axon(self, axon, synapse)
+            if response is None or response.vcf_content is None:
+                continue
 
-            responses = [
-                (uid, resp)
-                for uid, resp in zip(selected_uids, raw_responses)
-                if isinstance(resp, GenomicsTaskSynapse) and resp.vcf_content
-            ]
+            with open(f"vcfs/{uid}.vcf", "w") as f:
+                vcf_content = f"##response_time={response.elapsed_time}\n" + response.vcf_content
+                f.write(vcf_content)
+    except Exception as e:
+        bt.logging.error(f"Error during fetching process: {e}")
+    finally:
+        self.is_fetching = False
+        asyncio.create_task(run_validation(self))
 
-            scores = [
-                score(
-                    MinerSubmission(
-                        uid=int(uid),
-                        vcf_content=resp.vcf_content,
-                        response_time=resp.elapsed_time,
-                    ), ground_truth, bam)
-                for uid, resp in responses
-            ]
+async def run_validation(self):
+    try:
+        bt.logging.info("Validating miner's vcf...")
+        os.makedirs("vcfs", exist_ok=True)
 
-            for miner_score in scores:
-                if miner_score.final_score > 0:
-                    final_scores.append(miner_score)
-        
-        scores = [(s.uid, s.final_score) for s in final_scores]
-        bt.logging.info(f"Scores: {scores}")
+        ground_truth = await fetch_ground_truth(self)
+        bt.logging.info(f"Fetched ground truth: {ground_truth.model_dump()}")
+
+        # Download ground truth data first (ref needed by create_mapping_file)
+        urllib.request.urlretrieve(ground_truth.truth_vcf, "data/truth.vcf")
+        ground_truth.truth_vcf = "data/truth.vcf"
+        urllib.request.urlretrieve(ground_truth.ref, "data/ref.fa")
+        ground_truth.ref = "data/ref.fa"
+
+        bam = create_mapping_file(ground_truth.ref, "data/read_1.fq", "data/read_2.fq")
+
+        final_scores: list[MinerSubmission] = []
+
+        for vcf_file in os.listdir("vcfs"):
+            if not vcf_file.endswith(".vcf"):
+                continue
+            uid = int(os.path.splitext(vcf_file)[0])
+            with open(f"vcfs/{vcf_file}") as f:
+                lines = f.readlines()
+            response_time = None
+            vcf_lines = []
+            for line in lines:
+                if line.startswith("##response_time="):
+                    response_time = float(line.strip().split("=", 1)[1])
+                else:
+                    vcf_lines.append(line)
+            vcf_content = "".join(vcf_lines)
+
+            miner_score = score(
+                MinerSubmission(
+                    uid=uid,
+                    vcf_content=vcf_content,
+                    response_time=response_time,
+                ), ground_truth, bam)
+
+            if miner_score.final_score > 0:
+                final_scores.append(miner_score)
+
+        bt.logging.info(f"Scores: {final_scores}")
         self.set_weights(final_scores, task.task_id)
     except Exception as e:
-        bt.logging.error(f"Error during validation process: {e}")
-    finally:
-        self.is_validating = False
+        bt.logging.error(f"Error validating miners' vcf: {e}")
+        return
 
 async def forward(self):
     """
@@ -216,8 +281,10 @@ async def forward(self):
 
     """
     try:
-        if (self.block - BASE_BLOCK_NUMBER) % INTERVAL_BLOCKS < 5 and not self.is_validating:
-            self.is_validating = True
+        if (self.block - BASE_BLOCK_NUMBER) % INTERVAL_BLOCKS < 5 and not self.is_fetching:
+            self.is_fetching = True
+            asyncio.create_task(fetch_miners_vcf(self))
+        elif (self.block - BASE_BLOCK_NUMBER) % INTERVAL_BLOCKS == VALIDATION_BLOCK:
             asyncio.create_task(run_validation(self))
     except Exception as e:
         bt.logging.error(f"Error during forward step: {e}")
