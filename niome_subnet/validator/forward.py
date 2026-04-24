@@ -195,6 +195,7 @@ async def fetch_miners_vcf(self):
         miner_task = await fetch_task(self)
         bt.logging.info(f"Fetched task: {miner_task.model_dump()}")
         task = copy.deepcopy(miner_task)
+        self.task_id = task.task_id
 
         # Download task reads
         urllib.request.urlretrieve(task.input.read1_fastq, "data/read_1.fq")
@@ -264,7 +265,7 @@ async def run_validation(self):
                 final_scores.append(miner_score)
 
         bt.logging.info(f"Scores: {final_scores}")
-        self.set_weights(final_scores, task.task_id)
+        self.set_weights(final_scores, self.task_id)
     except Exception as e:
         bt.logging.error(f"Error validating miners' vcf: {e}")
         return

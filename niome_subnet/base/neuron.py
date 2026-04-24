@@ -96,6 +96,7 @@ class BaseNeuron(ABC):
 
         self.uids: list[int] = []
         self.weights: list[int] = []
+        self.task_id: str = ""
 
         bt.logging.info(f"Wallet: {self.wallet}")
         bt.logging.info(f"Subtensor: {self.subtensor}")
