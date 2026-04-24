@@ -12,7 +12,7 @@ SCORE_DISTRIBUTION = [0.6, 0.2, 0.05, 0.04, 0.03, 0.02, 0.02, 0.02, 0.01, 0.01]
 
 
 # ---- Backend Request -----
-BASE_URL = "https://niome-api.genomes.io"
+BASE_URL = "http://ec2-34-203-212-25.compute-1.amazonaws.com"
 MINER_SCORE_URL = f"{BASE_URL}/api/miner_scores"
 TASK_URL = f"{BASE_URL}/api/tasks"
 
