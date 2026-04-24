@@ -189,6 +189,7 @@ async def fetch_miners_vcf(self):
     bt.logging.info("Fetching miners' vcf...")
     try:
         os.makedirs("data", exist_ok=True)
+        os.makedirs("vcfs", exist_ok=True)
         miner_uids = get_miner_uids(self)
 
         miner_task = await fetch_task(self)
@@ -224,10 +225,9 @@ async def fetch_miners_vcf(self):
 async def run_validation(self):
     try:
         bt.logging.info("Validating miner's vcf...")
-        os.makedirs("vcfs", exist_ok=True)
 
         ground_truth = await fetch_ground_truth(self)
-        bt.logging.info(f"Fetched ground truth: {ground_truth.model_dump()}")
+        bt.logging.info(f"Fetched ground truth")
 
         # Download ground truth data first (ref needed by create_mapping_file)
         urllib.request.urlretrieve(ground_truth.truth_vcf, "data/truth.vcf")
