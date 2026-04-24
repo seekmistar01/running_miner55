@@ -180,17 +180,13 @@ async def query_axon(self, axon, synapse) -> Optional[GenomicsTaskSynapse]:
         bt.logging.error(f"Error querying axon {axon}: {e}")
         return None
 
-async def query_axon_limited(self, axon, synapse) -> Optional[GenomicsTaskSynapse]:
-    """Query an axon with a semaphore to limit concurrency."""
-    async with sem:
-        return await query_axon(self, axon, synapse)
-
 async def fetch_miners_vcf(self):
     bt.logging.info("Fetching miners' vcf...")
     try:
         os.makedirs("data", exist_ok=True)
         os.makedirs("vcfs", exist_ok=True)
         miner_uids = get_miner_uids(self)
+        np.random.shuffle(miner_uids)
 
         miner_task = await fetch_task(self)
         bt.logging.info(f"Fetched task: {miner_task.model_dump()}")
@@ -212,6 +208,14 @@ async def fetch_miners_vcf(self):
 
             response = await query_axon(self, axon, synapse)
             if response is None or response.vcf_content is None:
+                continue
+
+            lines = response.vcf_content.splitlines()
+            variant_count = 0
+            for line in lines:
+                if not line.startswith("#"):
+                    variant_count += 1
+            if variant_count != task.expected_variant_count:
                 continue
 
             with open(f"vcfs/{uid}.vcf", "w") as f:
