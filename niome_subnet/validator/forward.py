@@ -221,6 +221,8 @@ async def fetch_miners_vcf(self):
             with open(f"vcfs/{uid}.vcf", "w") as f:
                 vcf_content = f"##response_time={response.elapsed_time}\n" + response.vcf_content
                 f.write(vcf_content)
+
+        self.is_validating = False
     except Exception as e:
         bt.logging.error(f"Error during fetching process: {e}")
     finally:
@@ -272,8 +274,6 @@ async def run_validation(self):
         self.set_weights(final_scores, self.task_id)
     except Exception as e:
         bt.logging.error(f"Error validating miners' vcf: {e}")
-    finally:
-        self.is_validating = False
 
 async def forward(self):
     """
