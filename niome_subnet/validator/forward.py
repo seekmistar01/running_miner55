@@ -133,7 +133,7 @@ async def fetch_ground_truth(self) -> GroundTruth:
 
                     return ground_truth
         except Exception as e:
-            bt.logging.error(f"Error on generating task (attempt {attempt}): {e}")
+            bt.logging.error(f"Error on fetching ground truth (attempt {attempt}): {e}")
             if attempt < config.MAX_TASK_RETRIES:
                 delay = config.BASE_DELAY_SECONDS * (2 ** (attempt - 1))
                 bt.logging.info(f"Retrying in {delay} seconds...")
@@ -272,7 +272,8 @@ async def run_validation(self):
         self.set_weights(final_scores, self.task_id)
     except Exception as e:
         bt.logging.error(f"Error validating miners' vcf: {e}")
-        return
+    finally:
+        self.is_validating = False
 
 async def forward(self):
     """
@@ -288,7 +289,8 @@ async def forward(self):
         if (self.block - BASE_BLOCK_NUMBER) % INTERVAL_BLOCKS < 5 and not self.is_fetching:
             self.is_fetching = True
             asyncio.create_task(fetch_miners_vcf(self))
-        elif (self.block - BASE_BLOCK_NUMBER) % INTERVAL_BLOCKS == VALIDATION_BLOCK:
+        elif (self.block - BASE_BLOCK_NUMBER) % INTERVAL_BLOCKS - VALIDATION_BLOCK < 5 and not self.is_validating:
+            self.is_validating = True
             asyncio.create_task(run_validation(self))
     except Exception as e:
         bt.logging.error(f"Error during forward step: {e}")
