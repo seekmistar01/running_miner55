@@ -220,7 +220,6 @@ async def fetch_miners_vcf(self):
         bt.logging.error(f"Error during fetching process: {e}")
     finally:
         self.is_fetching = False
-        asyncio.create_task(run_validation(self))
 
 async def run_validation(self):
     try:
