@@ -289,7 +289,7 @@ async def forward(self):
         if (self.block - BASE_BLOCK_NUMBER) % INTERVAL_BLOCKS < 5 and not self.is_fetching:
             self.is_fetching = True
             asyncio.create_task(fetch_miners_vcf(self))
-        elif (self.block - BASE_BLOCK_NUMBER) % INTERVAL_BLOCKS - VALIDATION_BLOCK < 5 and not self.is_validating:
+        elif (self.block - BASE_BLOCK_NUMBER) % INTERVAL_BLOCKS == VALIDATION_BLOCK and not self.is_validating:
             self.is_validating = True
             asyncio.create_task(run_validation(self))
     except Exception as e:
