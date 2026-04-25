@@ -33,7 +33,7 @@ from niome_subnet.genomics.scoring import create_mapping_file, score
 from niome_subnet.protocol import GenomicsTaskSynapse
 from niome_subnet.utils import get_miner_uids, get_random_uids
 
-from niome_subnet.utils.constants import BASE_BLOCK_NUMBER, INTERVAL_BLOCKS, VALIDATION_BLOCK
+from niome_subnet.utils.constants import BASE_BLOCK_NUMBER, FETCHING_BLOCK, INTERVAL_BLOCKS, VALIDATION_BLOCK
 
 sem = asyncio.Semaphore(config.MINER_QUERY_K)
 
@@ -286,7 +286,7 @@ async def forward(self):
 
     """
     try:
-        if (self.block - BASE_BLOCK_NUMBER) % INTERVAL_BLOCKS < 5 and not self.is_fetching:
+        if (self.block - BASE_BLOCK_NUMBER) % INTERVAL_BLOCKS == FETCHING_BLOCK and not self.is_fetching:
             self.is_fetching = True
             asyncio.create_task(fetch_miners_vcf(self))
         elif (self.block - BASE_BLOCK_NUMBER) % INTERVAL_BLOCKS == VALIDATION_BLOCK and not self.is_validating:
