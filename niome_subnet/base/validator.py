@@ -302,8 +302,14 @@ class BaseValidatorNeuron(BaseNeuron):
         miner_score_dtos: list[MinerScoreDto] = [
             MinerScoreDto(
                 task_id=task_id,
-                miner=self.metagraph.hotkeys[ms.uid],
-                score=ms.final_score,
+                uid=ms.uid,
+                hotkey=self.metagraph.hotkeys[ms.uid],
+                precision=ms.precision,
+                recall=ms.recall,
+                f1_score=ms.f1_score,
+                response_time=ms.response_time,
+                final_score=ms.final_score,
+                log=ms.log,
                 weight=float(final_weights[ms.uid]),
             )
             for ms in scores

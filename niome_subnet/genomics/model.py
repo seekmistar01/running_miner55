@@ -78,11 +78,18 @@ class MinerScore(BaseModel):
     f1_score: float
     response_time: float
     final_score: float
+    log: str
 
 
 class MinerScoreDto(BaseModel):
     """Data transfer object for miner score submission."""
     task_id: str
-    miner: str
-    score: float
+    uid: int
+    hotkey: str
+    precision: float
+    recall: float
+    f1_score: float
+    response_time: float
+    final_score: float
+    log: str
     weight: float

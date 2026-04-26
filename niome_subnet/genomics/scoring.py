@@ -169,6 +169,7 @@ def score(miner_submission: MinerSubmission, ground_truth: GroundTruth, bam: str
             f1_score=f1,
             response_time=miner_submission.response_time,
             final_score=score_val,
+            log="",
         )
 
         return miner_score
@@ -181,4 +182,5 @@ def score(miner_submission: MinerSubmission, ground_truth: GroundTruth, bam: str
             f1_score=0.0,
             response_time=miner_submission.response_time,
             final_score=0.0,
+            log=f"{e}",
         )

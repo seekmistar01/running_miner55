@@ -267,8 +267,7 @@ async def run_validation(self):
                     response_time=response_time,
                 ), ground_truth, bam)
 
-            if miner_score.final_score > 0:
-                final_scores.append(miner_score)
+            final_scores.append(miner_score)
 
         bt.logging.info(f"Scores: {final_scores}")
         self.set_weights(final_scores, self.task_id)
