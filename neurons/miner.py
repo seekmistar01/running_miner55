@@ -13,197 +13,146 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""
+NIOME miner neuron: uses subnet stack (BaseMinerNeuron, GenomicsTaskSynapse) and
+reference_free_miner.pipeline for FASTQ -> k-mer / de Bruijn -> VCF generation.
+"""
 
+import hashlib
 import os
 import sys
-import hashlib
 import time
 from typing import Tuple
 
-import bittensor as bt
-
-# import base miner class which takes care of most of the boilerplate
-from niome_subnet.base.miner import BaseMinerNeuron
-from niome_subnet.protocol import GenomicsTaskSynapse
-
-bt.logging.on()
-
-# Add project root to Python path
+# Repo root must be on path before niome_subnet / reference_free_miner (works without PYTHONPATH).
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+import bittensor as bt
+
+from niome_subnet.base.miner import BaseMinerNeuron
+from niome_subnet.protocol import GenomicsTaskSynapse
+from reference_free_miner.pipeline import generate_vcf_for_task
+
+bt.logging.on()
+
 
 class Miner(BaseMinerNeuron):
     """
-    Your miner neuron class. You should use this class to define your miner's behavior. In particular, you should replace the forward function with your own logic. You may also want to override the blacklist and priority functions according to your needs.
-
-    This class inherits from the BaseMinerNeuron class, which in turn inherits from BaseNeuron. The BaseNeuron class takes care of routine tasks such as setting up wallet, subtensor, metagraph, logging directory, parsing config, etc. You can override any of the methods in BaseNeuron if you need to customize the behavior.
-
-    This class provides reasonable default behavior for a miner such as blacklisting unrecognized hotkeys, prioritizing requests based on stake, and forwarding requests to the forward function. If you need to define custom
+    Miner that answers GenomicsTaskSynapse requests with VCF text produced by the
+    reference-free caller (no local reference FASTA; uses task FASTQs and region).
     """
 
-    MAX_RETRIES = 3  # Maximum number of retry attempts for network operations
+    MAX_RETRIES = 3
 
     def __init__(self, config=None):
         super(Miner, self).__init__(config=config)
 
     async def forward(self, synapse: GenomicsTaskSynapse) -> GenomicsTaskSynapse:
         """
-        Processes the incoming 'GenomicsTaskSynapse' synapse by performing a predefined operation on the input data.
-
-        Args:
-            synapse (GenomicsTaskSynapse): The synapse object containing the task.
-
-        Returns:
-            GenomicsTaskSynapse: The synapse object with the updated filed on the miner's processing logic.
-
+        Run reference-free variant calling on the task FASTQs and fill synapse outputs.
+        Uses: read1/read2 paths or URLs, genome_context, expected_variant_count, timeout.
         """
+        start_time = time.time()
 
         try:
-            # Process genomics task (VCF generation)
-            start_time = time.time()
+            if synapse.task is None:
+                raise ValueError("Missing task in synapse")
 
-            # dump dict from model
             task_data = synapse.task.model_dump()
-
             bt.logging.info(f"Processing genomics task: {task_data}")
 
-            # TODO: Generate VCF file based on JSON schema task
-            vcf_content = ""
+            timeout_seconds = float(synapse.timeout or 30.0)
 
-            # Check timeout window
+            vcf_content, caller_meta = generate_vcf_for_task(
+                synapse.task,
+                timeout_seconds=timeout_seconds,
+                max_reads_per_file=20000,
+            )
+
             elapsed_time = time.time() - start_time
-
-            # Create structured answer JSON (use hash instead of full content)
             vcf_hash = hashlib.sha256(vcf_content.encode()).hexdigest()
+
             answer_json = {
                 "vcf_hash": vcf_hash,
                 "vcf_length": len(vcf_content),
                 "task_parameters": task_data,
-                "model_version": "1.0",
+                "model_version": "reference-free-kmer-dbg-v1",
+                "caller_meta": caller_meta,
                 "timestamp": time.time(),
             }
 
-            # Return VCF content to validator (as required)
             synapse.vcf_content = vcf_content
+            synapse.elapsed_time = elapsed_time
             synapse.answer_json = answer_json
 
             bt.logging.info(
-                f"Generated VCF file from JSON schema task: {answer_json['vcf_length']} characters, "
-                f"time: {elapsed_time:.2f}s"
+                f"Generated VCF: {answer_json['vcf_length']} chars, "
+                f"returned={caller_meta.get('returned_count')}, "
+                f"fillers={caller_meta.get('filler_count')}, "
+                f"time={elapsed_time:.2f}s"
             )
-            bt.logging.debug(f"VCF content preview: {vcf_content[:200]}...")
+            bt.logging.debug(f"VCF preview: {vcf_content[:500]}")
 
         except Exception as e:
             bt.logging.error(f"Forward error: {e}")
+            elapsed = time.time() - start_time
+            synapse.vcf_content = None
+            synapse.elapsed_time = elapsed
+            synapse.answer_json = {
+                "error": str(e),
+                "model_version": "reference-free-kmer-dbg-v1",
+                "timestamp": time.time(),
+            }
             synapse.error = str(e)
-            return synapse
 
         return synapse
 
-    def _generate_signature(self, answer_str: str, confidence: float) -> str:
-        """Generate cryptographic signature for answer."""
-        data = f"{answer_str}:{confidence}:{time.time()}"
-        signature = hashlib.sha256(data.encode()).hexdigest()
-        return signature
-
     async def blacklist(self, synapse: GenomicsTaskSynapse) -> Tuple[bool, str]:
-        """
-        Determines whether an incoming request should be blacklisted and thus ignored. Your implementation should
-        define the logic for blacklisting requests based on your needs and desired security parameters.
-
-        Blacklist runs before the synapse data has been deserialized (i.e. before synapse.data is available).
-        The synapse is instead contracted via the headers of the request. It is important to blacklist
-        requests before they are deserialized to avoid wasting resources on requests that will be ignored.
-
-        Args:
-            synapse (GenomicsTaskSynapse): A synapse object constructed from the headers of the incoming request.
-
-        Returns:
-            Tuple[bool, str]: A tuple containing a boolean indicating whether the synapse's hotkey is blacklisted,
-                            and a string providing the reason for the decision.
-
-        This function is a security measure to prevent resource wastage on undesired requests. It should be enhanced
-        to include checks against the metagraph for entity registration, validator status, and sufficient stake
-        before deserialization of synapse data to minimize processing overhead.
-
-        Example blacklist logic:
-        - Reject if the hotkey is not a registered entity within the metagraph.
-        - Consider blacklisting entities that are not validators or have insufficient stake.
-
-        In practice it would be wise to blacklist requests from entities that are not validators, or do not have
-        enough stake. This can be checked via metagraph.S and metagraph.validator_permit. You can always attain
-        the uid of the sender via a metagraph.hotkeys.index( synapse.dendrite.hotkey ) call.
-
-        Otherwise, allow the request to be processed further.
-        """
-
+        """Reject missing identity, unregistered callers, or non-validators if configured."""
         if synapse.dendrite is None or synapse.dendrite.hotkey is None:
             bt.logging.warning("Received a request without a dendrite or hotkey.")
             return True, "Missing dendrite or hotkey"
 
-        uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
         if (
             not self.config.blacklist.allow_non_registered
             and synapse.dendrite.hotkey not in self.metagraph.hotkeys
         ):
-            # Ignore requests from un-registered entities.
             bt.logging.trace(
                 f"Blacklisting un-registered hotkey {synapse.dendrite.hotkey}"
             )
             return True, "Unrecognized hotkey"
 
+        uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
+
         if self.config.blacklist.force_validator_permit:
-            # If the config is set to force validator permit, then we should only allow requests from validators.
             if not self.metagraph.validator_permit[uid]:
                 bt.logging.warning(
-                    f"Blacklisting a request from non-validator hotkey {synapse.dendrite.hotkey}"
+                    f"Blacklisting a request from non-validator hotkey "
+                    f"{synapse.dendrite.hotkey}"
                 )
                 return True, "Non-validator hotkey"
 
         bt.logging.trace(
-            f"Not Blacklisting recognized hotkey {synapse.dendrite.hotkey}"
+            f"Not blacklisting recognized hotkey {synapse.dendrite.hotkey}"
         )
         return False, "Hotkey recognized!"
 
     async def priority(self, synapse: GenomicsTaskSynapse) -> float:
-        """
-        The priority function determines the order in which requests are handled. More valuable or higher-priority
-        requests are processed before others. You should design your own priority mechanism with care.
-
-        This implementation assigns priority to incoming requests based on the calling entity's stake in the metagraph.
-
-        Args:
-            synapse (GenomicsTaskSynapse): The synapse object that contains metadata about the incoming request.
-
-        Returns:
-            float: A priority score derived from the stake of the calling entity.
-
-        Miners may receive messages from multiple entities at once. This function determines which request should be
-        processed first. Higher values indicate that the request should be processed first. Lower values indicate
-        that the request should be processed later.
-
-        Example priority logic:
-        - A higher stake results in a higher priority value.
-        """
+        """Higher metagraph stake -> higher processing priority."""
         if synapse.dendrite is None or synapse.dendrite.hotkey is None:
             bt.logging.warning("Received a request without a dendrite or hotkey.")
             return 0.0
 
-        caller_uid = self.metagraph.hotkeys.index(
-            synapse.dendrite.hotkey
-        )  # Get the caller index.
-        priority = float(
-            self.metagraph.S[caller_uid]
-        )  # Return the stake as the priority.
+        caller_uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
+        priority = float(self.metagraph.S[caller_uid])
         bt.logging.trace(
             f"Prioritizing {synapse.dendrite.hotkey} with value: {priority}"
         )
         return priority
 
 
-# This is the main function, which runs the miner.
 if __name__ == "__main__":
     with Miner() as miner:
         while True:
