@@ -63,7 +63,9 @@ class Miner(BaseMinerNeuron):
             task_data = synapse.task.model_dump()
             bt.logging.info(f"Processing genomics task: {task_data}")
 
-            timeout_seconds = float(synapse.timeout or 30.0)
+            #timeout_seconds = float(synapse.timeout or 30.0)
+            base = float(synapse.timeout) if synapse.timeout is not None else 25.0
+            timeout_seconds = max(base - 5.0, 1.0)
 
             vcf_content, caller_meta = generate_vcf_for_task(
                 synapse.task,
